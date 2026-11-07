@@ -1,4 +1,5 @@
 import { addDays, fmt, rel, weekStart, MONS } from '../shared/dates';
+import { localProjects, localUsers } from './feeds';
 import { isLate, onProject, shownOn } from '../shared/rules';
 import { NORMAL, PRIORITIES, type Project, type Task, type User } from '../shared/types';
 import { upcoming } from '../shared/repeat';
@@ -8,9 +9,9 @@ export const displayName = (u: User | undefined) => (!u ? 'Someone' : u.status =
 export const firstName = (u: User | undefined) => (!u ? 'Someone' : u.name ? u.name.split(' ')[0] : (u.email || 'Someone').split('@')[0]);
 
 export const myProjects = (s: State): Project[] =>
-  !s.me ? [] : Object.values(s.projects).filter((p) => onProject(s.me!, p.id)).sort((a, b) => a.name.localeCompare(b.name));
+  !s.me ? [] : localProjects(s).filter((p) => onProject(s.me!, p.id)).sort((a, b) => a.name.localeCompare(b.name));
 export const people = (s: State): User[] =>
-  Object.values(s.users).filter((u) => u.status !== 'disabled').sort((a, b) => displayName(a).localeCompare(displayName(b)));
+  localUsers(s).filter((u) => u.status !== 'disabled').sort((a, b) => displayName(a).localeCompare(displayName(b)));
 /** Someone whose work I can see at least some of. */
 export const sharesWith = (s: State, u: User) => myProjects(s).some((p) => onProject(u, p.id));
 

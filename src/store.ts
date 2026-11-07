@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppSettings, ArchivedProject, InboxItem, NotifyPrefs, Priority, Project, Role, Task, TaskEvent, User, WebhookInfo } from '../shared/types';
+import type { AppSettings, ArchivedProject, FeedInfo, InboxItem, NotifyPrefs, Priority, Project, Role, Task, TaskEvent, User, WebhookInfo } from '../shared/types';
 import type { EffortType } from '../shared/effort';
 import { NORMAL, NOTIFY_DEFAULTS } from '../shared/types';
 import type { PushState } from './push';
@@ -132,6 +132,11 @@ export interface State {
   multi: MultiSel;
   /** The switcher picks several at once (checkboxes) instead of one. Remembered on this device. */
   multiPick: boolean;
+  /** Other instances whose tasks (assigned to me) are shown here (src/feeds.ts), and their projects and people. */
+  feeds: FeedInfo[];
+  feedDir: { users: Record<string, User>; projects: Record<string, Project> };
+  /** The "Other instances" sheet (account menu). */
+  instancesOpen: boolean;
   projDay: string;
   projOpen: boolean;
   /** A project's view: archived tasks of the selected project (null = not loaded), and whether the section is open. */
@@ -214,6 +219,9 @@ export const useStore = create<State>()(() => ({
   projSel: localStorage.getItem('tv:proj') || 'all', // a project that's gone falls back to 'all' (ProjectsPage)
   multi: savedMulti(),
   multiPick: localStorage.getItem('tv:multiPick') === '1',
+  feeds: [],
+  feedDir: { users: {}, projects: {} },
+  instancesOpen: false,
   projDay: '',
   projOpen: true,
   archived: null,

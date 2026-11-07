@@ -85,7 +85,7 @@ export const canSeeProject = (v: Viewer, projectId: string) =>
   !v.archived.includes(projectId) && (v.role === 'admin' || v.projects.includes(projectId));
 
 export class HttpError extends Error {
-  constructor(public status: 400 | 401 | 403 | 404 | 409 | 500, message: string) {
+  constructor(public status: 400 | 401 | 403 | 404 | 409 | 500 | 502, message: string) {
     super(message);
   }
 }

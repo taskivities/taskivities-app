@@ -23,12 +23,14 @@ interface TokenRow { user_id: string; email: string; refresh_token: string; scop
 // ---------- encryption ----------
 // Key: TOKEN_KEY if set, otherwise derived from GOOGLE_CLIENT_SECRET (so there's nothing extra to set up).
 // Changing either just makes stored tokens unreadable: admins reconnect.
-async function key(env: Env) {
-  const material = env.TOKEN_KEY || env.GOOGLE_CLIENT_SECRET;
+async function key(env: Env, info = 'google-refresh-token') {
+  // Other instances' access tokens (worker/feed.ts) also work on instances without Google sign-in: the push key is
+  // always there.
+  const material = env.TOKEN_KEY || env.GOOGLE_CLIENT_SECRET || (info === 'google-refresh-token' ? undefined : env.VAPID_PRIVATE_KEY);
   if (!material) return null;
   const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(material), 'HKDF', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
-    { name: 'HKDF', hash: 'SHA-256', salt: new TextEncoder().encode('taskivities'), info: new TextEncoder().encode('google-refresh-token') },
+    { name: 'HKDF', hash: 'SHA-256', salt: new TextEncoder().encode('taskivities'), info: new TextEncoder().encode(info) },
     base,
     { name: 'AES-GCM', length: 256 },
     false,
@@ -38,17 +40,17 @@ async function key(env: Env) {
 const toB64 = (b: Uint8Array) => btoa(String.fromCharCode(...b));
 const fromB64 = (s: string) => Uint8Array.from(atob(s), (ch) => ch.charCodeAt(0));
 
-async function encrypt(env: Env, plain: string) {
-  const k = await key(env);
+export async function encrypt(env: Env, plain: string, info?: string) {
+  const k = await key(env, info);
   if (!k) throw new Error('No encryption key');
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, new TextEncoder().encode(plain)));
   return `v1.${toB64(iv)}.${toB64(ct)}`;
 }
-async function decrypt(env: Env, stored: string): Promise<string | null> {
+export async function decrypt(env: Env, stored: string, info?: string): Promise<string | null> {
   try {
     const [v, iv, ct] = stored.split('.');
-    const k = await key(env);
+    const k = await key(env, info);
     if (v !== 'v1' || !k) return null;
     return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(iv) }, k, fromB64(ct)));
   } catch {

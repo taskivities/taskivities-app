@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { feedOf, feedTaskUrl } from '../feeds';
 import { EFFORT_TYPES, effortFor, effortLabel, storedEffortLabel } from '../../shared/effort';
 import { addDays, fmt } from '../../shared/dates';
 import { isLate, shownOn } from '../../shared/rules';
@@ -28,23 +29,27 @@ export function Drawer() {
   const creator = s.users[t.createdBy];
   const p = s.projects[t.projectId];
   const eff = p?.effort ? effortFor(t.effort, p.effort) : null;
+  // A task from another instance (src/feeds.ts): done, date, priority, effort, notes, checklist and comments change
+  // here; the rest is shown, and changed there.
+  const ext = feedOf(s, t.id);
   const B = ({ children }: { children: ReactNode }) => <b>{children}</b>;
   const showNotes = !!(t.notes || notes || s.notesOpen);
   const showList = t.checklist.length > 0 || s.checklistOpen;
   const uploading = s.uploads.filter((u) => u.taskId === t.id);
-  const showFiles = s.attachmentsOn && (t.attachments.length > 0 || uploading.length > 0);
+  const showFiles = !ext && s.attachmentsOn && (t.attachments.length > 0 || uploading.length > 0);
+  const canAttach = !ext && s.attachmentsOn;
 
   return (
     <>
       <div className="backdrop" data-act="close-drawer" onClick={() => closeDrawer()} />
       <aside className="drawer" data-id={t.id} role="dialog" aria-modal="true" aria-label={`Task: ${t.title}`} tabIndex={-1}
-        onDragOver={(e) => { if (s.attachmentsOn && e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDropping(true); } }}
+        onDragOver={(e) => { if (canAttach && e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDropping(true); } }}
         onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropping(false); }}
-        onDrop={(e) => { if (!s.attachmentsOn) return; e.preventDefault(); setDropping(false); const f = [...e.dataTransfer.files]; if (f.length) void uploadFiles(t.id, f); }}
+        onDrop={(e) => { if (!canAttach) return; e.preventDefault(); setDropping(false); const f = [...e.dataTransfer.files]; if (f.length) void uploadFiles(t.id, f); }}
         onPaste={(e) => {
           // Pasting a screenshot (or files) anywhere in the task attaches it. Text pastes behave as usual.
           const f = [...e.clipboardData.files];
-          if (!s.attachmentsOn || !f.length || e.clipboardData.getData('text')) return;
+          if (!canAttach || !f.length || e.clipboardData.getData('text')) return;
           e.preventDefault();
           void uploadFiles(t.id, f.map((x, i) => (x.name && x.name !== 'image.png' ? x : new File([x], `Pasted image ${new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}${i ? ` (${i + 1})` : ''}.${(x.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: x.type }))));
         }}>
@@ -52,8 +57,9 @@ export function Drawer() {
         <div className="dr-top">
           <ProjPill p={p} />
           <span className="spacer" />
-          <button className="icon-btn" data-act="task-menu" title="More" aria-label="More actions" aria-haspopup="menu"
-            onClick={(e) => openPop({ type: 'taskmenu', mode: 'task', id: t.id }, e.currentTarget)}>{I.dots()}</button>
+          {ext && <a className="dr-ext" href={feedTaskUrl(ext, t.id)} target="_blank" rel="noopener" title={`This task is on ${ext.name} (${ext.url.replace(/^https?:\/\//, '')}). Handing it over, its project, repeating and files are changed there.`}>Open in {ext.name} {I.arrowUp(12)}</a>}
+          {!ext && <button className="icon-btn" data-act="task-menu" title="More" aria-label="More actions" aria-haspopup="menu"
+            onClick={(e) => openPop({ type: 'taskmenu', mode: 'task', id: t.id }, e.currentTarget)}>{I.dots()}</button>}
           <button className="icon-btn" data-act="close-drawer" title="Close  Esc" aria-label="Close" onClick={() => closeDrawer()}>{I.x()}</button>
         </div>
         <div className="dr-body">
@@ -69,8 +75,9 @@ export function Drawer() {
           </button>
           <dl className="fields">
             <dt>Assignee</dt>
-            <dd><button className="field" data-act="assign" onClick={(e) => openPop({ type: 'assign', mode: 'task', id: t.id }, e.currentTarget)}>
-              <Avatar user={s.users[t.assigneeId]} /> {displayName(s.users[t.assigneeId])} <span className="c">{I.chev()}</span></button></dd>
+            <dd>{ext ? <span className="field plain"><Avatar user={s.users[t.assigneeId]} /> {displayName(s.users[t.assigneeId])}</span> : (
+              <button className="field" data-act="assign" onClick={(e) => openPop({ type: 'assign', mode: 'task', id: t.id }, e.currentTarget)}>
+              <Avatar user={s.users[t.assigneeId]} /> {displayName(s.users[t.assigneeId])} <span className="c">{I.chev()}</span></button>)}</dd>
             <dt>Date</dt>
             <dd><button className="field" data-act="move" onClick={(e) => openMove([t.id], e.currentTarget)}>
               {I.cal()} {fmt(t.status === 'done' ? t.dueDate : shownOn(t, s.today))}
@@ -79,14 +86,14 @@ export function Drawer() {
             {t.series && <>
               <dt>Repeats</dt>
               <dd>
-                {t.status === 'open' && t.series.active ? (
+                {!ext && t.status === 'open' && t.series.active ? (
                   <button className="field" data-act="repeat" title="Change or stop repeating  (R)" onClick={(e) => openPop({ type: 'repeat', mode: 'task', id: t.id }, e.currentTarget)}>
                     {I.refresh(14)} {describe(t.series.rule, t.series.anchor)}
                     <span className="c">{I.chev()}</span></button>
                 ) : (
                   <span className="field plain">{I.refresh(14)} {t.series.active ? describe(t.series.rule, t.series.anchor) : 'Stopped repeating'}</span>
                 )}
-                {t.series.active && t.status === 'open' && (
+                {!ext && t.series.active && t.status === 'open' && (
                   <button className="skip-btn" data-act="skip" title="Move this copy to the next scheduled date" onClick={() => void skipTask(t.id)}>Skip this one</button>
                 )}
               </dd>
@@ -101,12 +108,15 @@ export function Drawer() {
                 <span className="c">{I.chev()}</span></button></dd>
             </>}
             <dt>Project</dt>
-            <dd><button className="field" data-act="proj" title={p?.description} onClick={(e) => openPop({ type: 'proj', mode: 'task', id: t.id }, e.currentTarget)}>
-              <Dot color={p?.color ?? '#A0A0AB'} />{p?.name} <span className="c">{I.chev()}</span></button></dd>
+            <dd>{ext ? <span className="field plain" title={p?.description}><Dot color={p?.color ?? '#A0A0AB'} />{p?.name}</span> : (
+              <button className="field" data-act="proj" title={p?.description} onClick={(e) => openPop({ type: 'proj', mode: 'task', id: t.id }, e.currentTarget)}>
+              <Dot color={p?.color ?? '#A0A0AB'} />{p?.name} <span className="c">{I.chev()}</span></button>)}</dd>
             <dt>Created by</dt>
             <dd className="plain"><Avatar user={creator} /> {displayName(creator)}<span style={{ color: 'var(--faint)' }}>· {stamp(t.createdAt, s.today).split(' · ')[0]}</span></dd>
-            <dt>Followers</dt>
-            <dd className="fol"><Followers t={t} s={s} /></dd>
+            {!ext && <><dt>Followers</dt>
+            <dd className="fol"><Followers t={t} s={s} /></dd></>}
+            {ext && t.attachments.length > 0 && <><dt>Files</dt>
+            <dd><a className="field plain" href={feedTaskUrl(ext, t.id)} target="_blank" rel="noopener">{I.clip(14)} {t.attachments.length} on {ext.name}</a></dd></>}
           </dl>
           {t.series?.active && t.status === 'open' && <div className="dr-hint">Changes to this copy carry over to future ones.</div>}
           {showNotes && (
@@ -125,12 +135,12 @@ export function Drawer() {
             <input id="attach-input" type="file" multiple hidden tabIndex={-1} aria-hidden="true"
               onChange={(e) => { const f = [...(e.target.files ?? [])]; e.target.value = ''; if (f.length) void uploadFiles(t.id, f); }} />
           )}
-          {(!showNotes || !showList || (s.attachmentsOn && !showFiles)) && (
+          {(!showNotes || !showList || (canAttach && !showFiles)) && (
             // Empty notes / no checklist: just small buttons, so the history sits higher up.
             <div className="dr-adds">
               {!showNotes && <button className="notes-add" data-act="notes" title="Add notes  (⇧N)" onClick={() => editNotes(t.id)}>{I.plus(13)} Add notes</button>}
               {!showList && <button className="notes-add" data-act="checklist" title="Add a checklist  (⇧C)" onClick={() => editChecklist(t.id)}>{I.check(12)} Add checklist</button>}
-              {s.attachmentsOn && !showFiles && <button className="notes-add" data-act="attach" title="Attach files  (⇧A) · or drop / paste them here" onClick={() => pickAttachments(t.id)}>{I.clip(13)} Attach files</button>}
+              {canAttach && !showFiles && <button className="notes-add" data-act="attach" title="Attach files  (⇧A) · or drop / paste them here" onClick={() => pickAttachments(t.id)}>{I.clip(13)} Attach files</button>}
             </div>
           )}
           <div className="lbl">Comments &amp; history <span className="muted">· permanently recorded</span></div>

@@ -9,6 +9,7 @@ const TABLES = [
   'webhook_keys', 'webhook_requests', 'webhooks',
   'tasks', 'series', 'project_members',
   'google_tokens', 'push_subscriptions', 'sessions', 'settings', 'audit_log',
+  'access_tokens', 'feeds', 'connect_codes', 'connect_states',
   'projects', 'users',
 ];
 

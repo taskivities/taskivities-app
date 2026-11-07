@@ -788,6 +788,9 @@ a.att-n:hover{color:var(--accent);text-decoration:underline}
 .ef-quick{display:flex;flex-wrap:wrap;gap:5px;padding:6px 4px 4px}
 .effort-pop .ef-v{display:inline-block;min-width:26px;font-weight:650;font-variant-numeric:tabular-nums}
 .fields .ph{color:var(--faint)}
+/* A task from another instance: where it lives, and a way there */
+.dr-ext{display:inline-flex;align-items:center;gap:4px;margin-right:4px;padding:4px 9px;border-radius:999px;background:var(--accent-soft);color:var(--accent-ink);font-size:12px;font-weight:600;text-decoration:none}
+.dr-ext svg{transform:rotate(45deg)}
 .pe-effort{display:flex;flex-direction:column;gap:8px;margin:8px 0 6px}
 .pe-req{display:flex;align-items:center;gap:8px;font-size:13px}
 
@@ -908,3 +911,22 @@ a.att-n:hover{color:var(--accent);text-decoration:underline}
 .sw-jump button{font-size:12px;font-weight:600;color:var(--muted);padding:3px 10px;border-radius:999px;background:var(--fill)}
 .sw-jump button:hover{background:var(--fill-strong);color:var(--text)}
 .sw-jump button span{color:var(--faint);font-weight:500;margin-left:2px}
+
+/* Other instances (account menu) */
+.sheet.instances .in-list{margin-top:6px}
+.in-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--line2)}
+.in-row:first-child{border-top:0}
+.in-dot{width:10px;height:10px;border-radius:3px;flex:none}
+.in-key{color:var(--faint);display:inline-flex}
+.in-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.in-main b{font-size:13.5px}
+.in-main span{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+.in-main .in-err{color:var(--danger-ink)}
+.in-empty{padding:4px 0 2px}
+.in-add{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+.in-foot{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.in-mk{display:flex;gap:8px;margin-top:10px}
+.in-mk .inv-in{flex:1}
+.in-made{margin-top:10px;padding:10px 12px;border-radius:10px;background:var(--accent-soft);color:var(--accent-ink);font-size:13px;display:flex;flex-direction:column;gap:8px}
+.in-made code{word-break:break-all}
+.in-row a.btn-ghost{text-decoration:none}

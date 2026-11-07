@@ -17,12 +17,12 @@ export interface McpProps extends Record<string, unknown> {
 
 export const oauthRoutes = new Hono<AppEnv>();
 
-const esc = (s: string) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+export const esc = (s: string) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 /** Client names are self-asserted and end up in history; keep them short and printable. */
 export const cleanClientName = (s: string | undefined | null) =>
   (s ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40) || 'AI assistant';
 
-function page(title: string, body: string, status = 200, headers = new Headers()) {
+export function page(title: string, body: string, status = 200, headers = new Headers()) {
   headers.set('content-type', 'text/html; charset=utf-8');
   return new Response(
     `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { localProjects, localUsers } from '../feeds';
 import { fmt } from '../../shared/dates';
 import { EMAIL_RE, isAdmin } from '../../shared/rules';
 import { DESCRIPTION_MAX, PROJECT_COLORS, type Role } from '../../shared/types';
@@ -18,7 +19,7 @@ export function openProjEdit(id: string | null, opts: { forDraft?: boolean } = {
   const p = id ? s.projects[id] : null;
   set({
     projEdit: {
-      id, forDraft: opts.forDraft, name: p?.name ?? '', color: p?.color ?? PROJECT_COLORS[Object.keys(s.projects).length % PROJECT_COLORS.length],
+      id, forDraft: opts.forDraft, name: p?.name ?? '', color: p?.color ?? PROJECT_COLORS[localProjects(s).map((p) => p.id).length % PROJECT_COLORS.length],
       description: p?.description ?? '',
       effort: p?.effort ?? null, effortRequired: p?.effortRequired ?? false,
       members: id ? people(s).filter((u) => !isAdmin(u) && u.projects.includes(id)).map((u) => u.id) : [],
@@ -34,8 +35,8 @@ export function TeamPage() {
   const list = people(s).sort((a, b) => a.status.localeCompare(b.status) || Number(isAdmin(b)) - Number(isAdmin(a)) || displayName(a).localeCompare(displayName(b)));
   const admins = list.filter(isAdmin).length;
   const invited = list.filter((u) => u.status === 'invited').length;
-  const projects = Object.values(s.projects).sort((a, b) => a.name.localeCompare(b.name));
-  const disabled = Object.values(s.users).filter((u) => u.status === 'disabled')
+  const projects = localProjects(s).sort((a, b) => a.name.localeCompare(b.name));
+  const disabled = localUsers(s).filter((u) => u.status === 'disabled')
     .sort((a, b) => (b.disabledAt ?? '').localeCompare(a.disabledAt ?? '') || displayName(a).localeCompare(displayName(b)));
 
   const tab = s.manageTab;
@@ -199,7 +200,7 @@ function DisabledPeople({ s, list }: { s: State; list: State['users'][string][] 
 
 /** Archived projects: hidden from everyone with all their tasks. Collapsed by default; each can be restored. */
 function ArchivedProjects({ s }: { s: State }) {
-  const n = Object.keys(s.projects).length;
+  const n = localProjects(s).map((p) => p.id).length;
   useEffect(() => { void loadArchivedProjects(); }, [n]);
   const list = s.archivedProjects;
   if (!list?.length) return null;
@@ -270,7 +271,7 @@ function InviteForm({ s }: { s: State }) {
           <div className="lbl">Projects</div>
           {inv.role === 'admin' ? <div className="muted-s">Admins can see every project and manage the team.</div> : (
             <div className="pchips">
-              {Object.values(s.projects).sort((a, b) => a.name.localeCompare(b.name)).map((p) => {
+              {localProjects(s).sort((a, b) => a.name.localeCompare(b.name)).map((p) => {
                 const on = inv.projects.includes(p.id);
                 return (
                   <button key={p.id} className={`pchip ${on ? 'on' : ''}`} aria-pressed={on}

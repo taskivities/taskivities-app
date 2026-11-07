@@ -3,8 +3,9 @@ import { addDays } from '../shared/dates';
 import { isAdmin } from '../shared/rules';
 import type { Priority } from '../shared/types';
 import {
-  closeConnect, closeDrawer, goHome, closeHelp, closePop, moveTasks, openDrawer, openHelp, openPop, setPage, setPriority, setView, skipTask, toast, toggleDone, closeHook, editChecklist, editNotes, pickAttachments, setFollowing } from './actions';
+  closeConnect, closeDrawer, goHome, closeHelp, closePop, moveTasks, openDrawer, openHelp, openPop, setPage, setPriority, setView, skipTask, toast, toggleDone, closeHook, elsewhere, editChecklist, editNotes, pickAttachments, setFollowing } from './actions';
 import { openInbox } from './inbox';
+import { isFeed } from './feeds';
 import { openMove } from './components/rows';
 import { curNav, focusLater, focusNav, navEls, trapTab } from './focus';
 import { S, set } from './store';
@@ -88,6 +89,7 @@ export function onKeyDown(e: KeyboardEvent) {
 
   if (s.projEdit) { if (k === 'Tab') trapTab(e, document.querySelector('.sheet')); return; } // the editor handles Esc / Enter itself
   if (s.hookEdit) { if (k === 'Escape') { e.preventDefault(); closeHook(); } else if (k === 'Tab') trapTab(e, document.querySelector('.sheet')); return; }
+  if (s.instancesOpen) { if (k === 'Tab') trapTab(e, document.querySelector('.sheet')); return; } // the sheet handles Esc
   if (s.connect) { if (k === 'Escape') { e.preventDefault(); closeConnect(); } else if (k === 'Tab') trapTab(e, document.querySelector('.sheet')); return; }
   if (s.help) { if (k === 'Escape' || isQuestion) { e.preventDefault(); closeHelp(); } else if (k === 'Tab') trapTab(e, document.querySelector('.help')); return; }
   if (s.pop) { popKeys(e); return; }
@@ -185,6 +187,8 @@ export function onKeyDown(e: KeyboardEvent) {
   if (!task) return;
   const isDiv = onNav && t.tagName === 'DIV';
   if ((k === 'Enter' && isDiv && !s.drawer) || (k === 'o' && !s.drawer)) { e.preventDefault(); openDrawer(task.id); return; }
+  // Tasks from other instances: handing over, repeating, following and files are done there.
+  if (isFeed(task.id) && (k === 't' || k === 'r' || k === 's' || k === 'f' || ((k === 'a' || k === 'A') && e.shiftKey))) { e.preventDefault(); elsewhere(task.id); return; }
   if (k === 'e') { e.preventDefault(); openDrawer(task.id, true); return; }
   if (isN && e.shiftKey) { e.preventDefault(); editNotes(task.id); return; }
   if ((k === 'a' || k === 'A') && e.shiftKey) { e.preventDefault(); pickAttachments(task.id); return; }

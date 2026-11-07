@@ -23,6 +23,8 @@ export interface User {
   /** When and by whom they were disabled (null unless disabled). */
   disabledAt: string | null;
   disabledBy: string | null;
+  /** App only: someone on another instance (src/feeds.ts), shown on tasks from there. Never in this instance's lists. */
+  feed?: string;
 }
 
 export interface Project {
@@ -35,6 +37,8 @@ export interface Project {
   /** How the project measures effort on its tasks (null: it doesn't), and whether a task needs it before it's done. */
   effort: EffortType | null;
   effortRequired: boolean;
+  /** App only: a project on another instance (src/feeds.ts). Never in this instance's lists. */
+  feed?: string;
 }
 
 /** What a person is notified about on their devices (Web Push). */
@@ -221,6 +225,35 @@ export interface Bootstrap {
   /** Inbox entries I haven't seen yet (at most 100). */
   inboxUnread: number;
 }
+
+// ---------- other instances (worker/feed.ts) ----------
+/** Someone on another instance, as that instance describes them (only what's needed to show their name). */
+export interface FeedPerson { id: string; name: string; email: string; color: string }
+/** What another instance sends: your tasks there (assigned to you), and the projects and people they mention. */
+export interface FeedTasks {
+  instance: string;
+  me: FeedPerson;
+  projects: Project[];
+  users: FeedPerson[];
+  tasks: Task[];
+}
+/** Another instance you show your tasks from. */
+export interface FeedInfo {
+  id: string;
+  url: string;
+  /** That instance's own name. */
+  name: string;
+  color: string;
+  /** Who you are there. */
+  user: { name: string; email: string };
+  lastOkAt: string | null;
+  /** Why the last fetch failed (null when it worked). */
+  lastError: string | null;
+}
+/** An access token you made, so another instance can show your tasks from here. The token itself is shown once. */
+export interface AccessTokenInfo { id: string; name: string; createdAt: string; lastUsedAt: string | null }
+/** Access tokens look like this, so they're easy to spot (and to scan for if one leaks). */
+export const TOKEN_PREFIX = 'tvk_';
 
 /** A webhook as admins see it (Settings → Webhooks; worker/webhooks.ts). */
 export interface WebhookInfo {

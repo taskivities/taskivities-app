@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { localProjects, localUsers } from '../feeds';
 import { fmt } from '../../shared/dates';
 import { isAdmin } from '../../shared/rules';
 import { PRIORITIES, type Priority, type WebhookInfo, type WebhookRequestInfo } from '../../shared/types';
@@ -29,7 +30,7 @@ const time = (iso: string) => {
 };
 
 function blankMapping(s: State): Mapping {
-  const projectId = Object.values(s.projects).sort((a, b) => a.name.localeCompare(b.name))[0]?.id ?? '';
+  const projectId = localProjects(s).sort((a, b) => a.name.localeCompare(b.name))[0]?.id ?? '';
   return { title: '', notes: '', projectId, assignee: { userId: s.me!.id }, due: { mode: 'today' }, priority: { value: 3 }, when: null, dedupePath: null };
 }
 
@@ -60,7 +61,7 @@ export function WebhookSheet() {
   useEffect(() => { document.querySelector<HTMLElement>('#hk-name')?.focus(); }, []);
 
   const members = useMemo(
-    () => Object.values(s.users).filter((u) => u.status !== 'disabled' && (isAdmin(u) || u.projects.includes(m.projectId))).sort((a, b) => displayName(a).localeCompare(displayName(b))),
+    () => localUsers(s).filter((u) => u.status !== 'disabled' && (isAdmin(u) || u.projects.includes(m.projectId))).sort((a, b) => displayName(a).localeCompare(displayName(b))),
     [s.users, m.projectId],
   );
   if (!h) return null;
@@ -188,10 +189,10 @@ export function WebhookSheet() {
                 <label className="hk-l" htmlFor="hk-proj">Project</label>
                 <select id="hk-proj" value={m.projectId} onChange={(e) => {
                   const projectId = e.target.value;
-                  const ok = Object.values(s.users).some((u) => u.id === m.assignee.userId && (isAdmin(u) || u.projects.includes(projectId)));
+                  const ok = localUsers(s).some((u) => u.id === m.assignee.userId && (isAdmin(u) || u.projects.includes(projectId)));
                   up({ projectId, assignee: ok ? m.assignee : { ...m.assignee, userId: s.me!.id } });
                 }}>
-                  {Object.values(s.projects).sort((a, b) => a.name.localeCompare(b.name)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  {localProjects(s).sort((a, b) => a.name.localeCompare(b.name)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
 
                 <label className="hk-l" htmlFor="hk-who">Assignee</label>

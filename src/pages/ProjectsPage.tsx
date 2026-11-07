@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { localProjects, localUsers } from '../feeds';
 import { DOW, addDays, fmt, parseDate } from '../../shared/dates';
 import { isAdmin, isLate } from '../../shared/rules';
 import { PRIORITIES, type Task } from '../../shared/types';
@@ -22,7 +23,7 @@ const listNames = (xs: string[]) =>
  */
 export function projectView(s: State) {
   const all = isAdmin(s.me!) ? 'All projects' : 'All my projects';
-  const seen = (t: Task) => !!s.projects[t.projectId];
+  const seen = (t: Task) => !!s.projects[t.projectId] && !s.projects[t.projectId].feed; // this instance's projects only
   if (s.projSel === 'multi') {
     const projects = s.multi.projects.filter((id) => s.projects[id]);
     const people = s.multi.people.filter((id) => s.users[id]);
@@ -30,7 +31,7 @@ export function projectView(s: State) {
     const who = listNames(people.map((id) => (id === s.me!.id ? 'Me' : firstName(s.users[id]))));
     const what = listNames(projects.map((id) => s.projects[id].name));
     // Effort totals when every project in view measures it the same way.
-    const types = new Set((projects.length ? projects : Object.keys(s.projects)).map((id) => s.projects[id]?.effort ?? null));
+    const types = new Set((projects.length ? projects : localProjects(s).map((p) => p.id)).map((id) => s.projects[id]?.effort ?? null));
     return {
       key: 'multi', multi: true as const, people, projects, project, showProject: !project,
       name: (who && what ? `${who} in ${what}` : who || what) || all,

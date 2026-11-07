@@ -9,6 +9,8 @@ section into the new version's; `git push --follow-tags` publishes it.
 
 ## Unreleased
 
+- **Other instances:** see the tasks you have on other Taskivities instances in your own. In the account menu, open **Other instances**, give the other instance's address and choose **Request access**; you approve it there and come back connected (or paste an access token made there). Your tasks there then show in your day, week and board, labelled with where they're from, and you can mark them done, move them, change priority and effort, edit notes and checklists, and comment, all saved on their own instance. Anything else opens the task there. Access can be revoked any time from the other instance. Both instances need this version.
+
 ## v0.5.2 (2026-11-06)
 
 - **Empty days are hidden:** in Week views, days with nothing done or planned are no longer shown, so the list is shorter. Today always shows. A week with nothing at all says so.

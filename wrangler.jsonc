@@ -34,7 +34,11 @@
 			"/authorize",
 			"/token",
 			"/register",
-			"/.well-known/*"
+			"/.well-known/*",
+			// Connecting instances (worker/feed.ts): the API other instances call, and approving / coming back.
+			"/feed/*",
+			"/connect",
+			"/connect/*"
 		]
 	},
 	"d1_databases": [

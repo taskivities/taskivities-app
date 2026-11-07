@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { localProjects, localUsers } from '../feeds';
 import { DOW, MONL, addDays, fmt, parseDate, toDate, weekStart } from '../../shared/dates';
 import { type Freq, type Repeat, cleanRepeat, describe, presets, sameRule } from '../../shared/repeat';
 import { isAdmin, onProject } from '../../shared/rules';
@@ -307,7 +308,7 @@ function SwitchPop({ p, s }: { p: Pop; s: State }) {
   const TD = s.view === 'today';
   // Week and board: what's open that week. Today: what's open today (people) / done that day (a project).
   const inView = (t: Task) => t.status === 'open' && (TD ? shownOn(t, s.today) === s.today : shownOn(t, s.today) >= ws && shownOn(t, s.today) <= we);
-  const inP = (id: string) => (t: Task) => (id === 'all' ? !!s.projects[t.projectId] : t.projectId === id);
+  const inP = (id: string) => (t: Task) => (id === 'all' ? !!s.projects[t.projectId] && !s.projects[t.projectId].feed : t.projectId === id);
   const projCount = (id: string) => (onProjects && TD
     ? `${projectDayData(s, inP(id), s.projDay).done.length} done`
     : `${tasks.filter((t) => inP(id)(t) && inView(t)).length} open`);
@@ -445,7 +446,7 @@ function SwitchPop({ p, s }: { p: Pop; s: State }) {
 
 function RolePop({ p, s }: { p: Pop; s: State }) {
   const u = s.users[p.userId!];
-  const admins = Object.values(s.users).filter((x) => x.status !== 'disabled' && x.role === 'admin').length;
+  const admins = localUsers(s).filter((x) => x.status !== 'disabled' && x.role === 'admin').length;
   const lastAdmin = u.role === 'admin' && admins <= 1;
   const choose = (role: 'admin' | 'member') => {
     closePop(true);
@@ -468,7 +469,7 @@ function UserProjectsPop({ p, s }: { p: Pop; s: State }) {
   return (
     <>
       <div className="pop-h">{displayName(u)} can see</div>
-      {Object.values(s.projects).sort((a, b) => a.name.localeCompare(b.name)).map((pr) => {
+      {localProjects(s).sort((a, b) => a.name.localeCompare(b.name)).map((pr) => {
         const on = u.projects.includes(pr.id);
         const n = openIn(pr.id);
         const lock = on && (n > 0 || u.projects.length === 1);
@@ -489,9 +490,9 @@ function DisablePop({ p, s }: { p: Pop; s: State }) {
   const u = s.users[p.userId!];
   const open = Object.values(s.tasks).filter((t) => t.assigneeId === u.id && t.status === 'open');
   const projs = [...new Set(open.map((t) => t.projectId))];
-  const admins = Object.values(s.users).filter((x) => x.status !== 'disabled' && x.role === 'admin').length;
+  const admins = localUsers(s).filter((x) => x.status !== 'disabled' && x.role === 'admin').length;
   if (u.role === 'admin' && admins <= 1) return <><div className="pop-h">Can't disable the last admin</div><div className="pop-body">Make someone else an admin first.</div></>;
-  const targets = Object.values(s.users).filter((x) => x.id !== u.id && x.status === 'active' && projs.every((pid) => onProject(x, pid)));
+  const targets = localUsers(s).filter((x) => x.id !== u.id && x.status === 'active' && projs.every((pid) => onProject(x, pid)));
   const go = (to?: string) => { closePop(false); focusLater('[data-act="inv-open"]'); void disableUser(u.id, to); };
   return (
     <>
@@ -516,7 +517,7 @@ function DisablePop({ p, s }: { p: Pop; s: State }) {
 /** Enable a disabled person again. Members pick their projects (preselected: the ones they had). */
 function EnablePop({ p, s }: { p: Pop; s: State }) {
   const u = s.users[p.userId!];
-  const all = Object.values(s.projects).sort((a, b) => a.name.localeCompare(b.name));
+  const all = localProjects(s).sort((a, b) => a.name.localeCompare(b.name));
   const [picked, setPicked] = useState<string[]>(() => u.projects.filter((id) => s.projects[id]));
   const member = u.role === 'member';
   const go = () => { closePop(false); focusLater('[data-act="disabled-toggle"]'); void enableUser(u.id, member ? picked : undefined); };
@@ -570,6 +571,7 @@ function AccountPop({ s }: { s: State }) {
         </button>
       )}
       <button className="opt" onClick={() => { closePop(false); openConnect(); }}>{I.bolt(15)}Connect an AI assistant</button>
+      <button className="opt" data-act="instances" onClick={() => { closePop(false); set({ instancesOpen: true }); }}>{I.link(15)}Other instances{s.feeds.length > 0 && <span className="r">{s.feeds.length} connected</span>}</button>
       {isAdmin(me) && s.updateRepo && (
         <button className={`opt ${s.update ? 'opt-update' : ''}`} data-act="update"
           onClick={() => { const a = document.querySelector<HTMLElement>('[data-act="account"]'); if (a) openPop({ type: 'update', returnSel: '[data-act="account"]' }, a); }}>

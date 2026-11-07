@@ -1,4 +1,5 @@
 import type { DragEvent } from 'react';
+import { isFeed } from '../feeds';
 import { EFFORT_TYPES, effortFor, effortLabel } from '../../shared/effort';
 import { diffDays, fmt, rel } from '../../shared/dates';
 import { isLate, shownOn } from '../../shared/rules';
@@ -84,8 +85,8 @@ export function TaskRow({ t, ctx, showProject = false }: { t: Task; ctx: RowCtx;
       {!done && !ghost && (
         <div className="acts">
           <button className="icon-btn" tabIndex={-1} data-act="move" title="Move date  (D)" onClick={(e) => openMove([t.id], e.currentTarget)}>{I.cal()}</button>
-          <button className="icon-btn" tabIndex={-1} data-act="assign" title="Transfer to someone  (T)"
-            onClick={(e) => openPop({ type: 'assign', mode: 'task', id: t.id }, e.currentTarget)}>{I.swap()}</button>
+{!isFeed(t.id) && (<button className="icon-btn" tabIndex={-1} data-act="assign" title="Transfer to someone  (T)"
+            onClick={(e) => openPop({ type: 'assign', mode: 'task', id: t.id }, e.currentTarget)}>{I.swap()}</button>)}
         </div>
       )}
     </div>

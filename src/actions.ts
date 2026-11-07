@@ -2,6 +2,7 @@
 import { addDays, rel, weekStart } from '../shared/dates';
 import { type Repeat, describe } from '../shared/repeat';
 import { onProject } from '../shared/rules';
+import { applyFeedDir, feedOf, feedTaskUrl, forTask, isFeed, loadFeeds, localUsers } from './feeds';
 import { type EffortType, effortFor, storedEffortLabel } from '../shared/effort';
 import { ATTACH_MAX_BYTES } from '../shared/types';
 import type { AppSettings, ArchivedProject, Bootstrap, InviteEmailResult, WebhookInfo, WebhookRequestInfo, Priority, Project, Role, SyncResponse, Task, TaskEvent, User } from '../shared/types';
@@ -67,6 +68,7 @@ export async function boot() {
     const b = await api.get<Bootstrap>('/api/bootstrap');
     const t = await api.get<{ from: string; to: string; tasks: Task[]; version: number }>('/api/tasks');
     set({ ...applyDirectory(b), tasks: byId(t.tasks), version: t.version, range: { from: t.from, to: t.to }, ready: true, lastSync: Date.now() });
+    void loadFeeds(true); // tasks from other instances, if any are connected
     const last = localStorage.getItem('tv:lastProject');
     set((s) => ({ draft: { ...s.draft, projectId: last && myProjects(s).some((p) => p.id === last) ? last : myProjects(s)[0]?.id ?? null } }));
     gmailReturn();
@@ -74,6 +76,15 @@ export async function boot() {
     void checkForUpdate();
     // Opened from a notification (a new window): /?task=<id>.
     const q = new URLSearchParams(location.search);
+    // Back from approving access on another instance (worker/feed.ts → /connect/done).
+    const inst = q.get('instances');
+    if (inst) {
+      const why = q.get('why'), name = q.get('name');
+      ['instances', 'why', 'name'].forEach((k) => q.delete(k));
+      history.replaceState(null, '', `${location.pathname}${q.size ? `?${q}` : ''}`);
+      set({ instancesOpen: true });
+      toast(inst === 'connected' ? `Connected ${name}. Your tasks there now show with yours.` : why || 'Couldn’t connect.', undefined, inst !== 'connected');
+    }
     const task = q.get('task');
     if (task) {
       q.delete('task');
@@ -91,7 +102,10 @@ async function reloadDirectory() {
   const b = await api.get<Bootstrap>('/api/bootstrap');
   const r = s.range;
   const t = await api.get<{ from: string; to: string; tasks: Task[]; version: number }>(`/api/tasks${r ? `?from=${r.from}&to=${r.to}` : ''}`);
-  set({ ...applyDirectory(b), tasks: byId(t.tasks), version: t.version, range: { from: t.from, to: t.to }, lastSync: Date.now() });
+  // Other instances' tasks aren't this instance's to reload: keep them, and their projects and people.
+  const theirs = Object.fromEntries(Object.entries(S().tasks).filter(([id]) => isFeed(id)));
+  set({ ...applyDirectory(b), tasks: { ...theirs, ...byId(t.tasks) }, version: t.version, range: { from: t.from, to: t.to }, lastSync: Date.now() });
+  applyFeedDir();
 }
 
 let syncing = false;
@@ -136,6 +150,7 @@ export async function sync() {
       if (flashIds.length) setTimeout(() => flash(flashIds), 0);
     } else patch.version = r.version;
     set(patch);
+    void loadFeeds(); // other instances: at most every 45 seconds
   } catch (e) {
     if (e instanceof ApiError && e.status === 0) set({ offline: true });
   } finally {
@@ -151,11 +166,12 @@ export async function ensureRange(from: string, to: string) {
   const nt = to > r.to ? to : r.to;
   const t = await api.get<{ tasks: Task[] }>(`/api/tasks?from=${nf}&to=${nt}`);
   set((s) => ({ tasks: { ...s.tasks, ...byId(t.tasks) }, range: { from: nf, to: nt } }));
+  void loadFeeds(true);
 }
 
 export async function loadEvents(id: string) {
   try {
-    const { events } = await api.get<{ events: TaskEvent[] }>(`/api/tasks/${id}/events`);
+    const { events } = await forTask(id).get<{ events: TaskEvent[] }>('/events');
     set((s) => ({ events: { ...s.events, [id]: events } }));
   } catch (e) {
     toastError(e);
@@ -165,6 +181,16 @@ export async function loadEvents(id: string) {
 // ---------- task edits ----------
 type Changes = Partial<Pick<Task, 'title' | 'notes' | 'projectId' | 'assigneeId' | 'dueDate' | 'priority' | 'status' | 'effort'>>;
 
+/**
+ * A task from another instance (src/feeds.ts): only done, date, priority, notes, checklist and comments change from
+ * here. For anything else, say so and offer to open it there. Returns true when it's one of those.
+ */
+export function elsewhere(id: string): boolean {
+  const f = feedOf(S(), id);
+  if (!f) return false;
+  toast(`Do that on ${f.name}.`, undefined, false, { label: `Open ${f.name}`, run: () => window.open(feedTaskUrl(f, id), '_blank', 'noopener') });
+  return true;
+}
 const putTask = (t: Task) => set((s) => ({ tasks: { ...s.tasks, [t.id]: t }, events: { ...s.events, [t.id]: undefined } }));
 
 function optimistic(prev: Task, c: Changes): Task {
@@ -186,7 +212,7 @@ export async function patchTask(id: string, c: Changes, opts: PatchOpts = {}) {
   mine.set(id, Date.now());
   flash([id]);
   try {
-    const { task, next } = await api.patch<{ task: Task; next: Task | null }>(`/api/tasks/${id}`, { ...c, note: opts.note, restore: opts.restore, thisOnly: opts.thisOnly });
+    const { task, next } = await forTask(id).patch<{ task: Task; next: Task | null }>('', { ...c, note: opts.note, restore: opts.restore, thisOnly: opts.thisOnly });
     putTask(task);
     if (next) { mine.set(next.id, Date.now()); putTask(next); }
     const text = opts.toast && next ? `${opts.toast} · next one ${rel(next.dueDate, S().today)}` : opts.toast;
@@ -228,10 +254,11 @@ export const setEffort = (id: string, effort: string | null, thenDone = false) =
     { toast: thenDone ? `Done: ${t.title}` : effort ? `Effort: ${storedEffortLabel(effort)}` : 'Effort cleared' });
 };
 export const transfer = (id: string, to: string, note?: string, thisOnly?: boolean) =>
-  patchTask(id, { assigneeId: to }, { note, thisOnly, toast: `Transferred to ${firstName(S().users[to])}${thisOnly ? ' (just this one)' : ''}` });
+  elsewhere(id) ? Promise.resolve() : patchTask(id, { assigneeId: to }, { note, thisOnly, toast: `Transferred to ${firstName(S().users[to])}${thisOnly ? ' (just this one)' : ''}` });
 
 /** Repeating tasks: change the rule (a Repeat), or stop repeating for good (null). Not optimistic: the server decides dates. */
 export async function setRepeat(id: string, rule: Repeat | null) {
+  if (elsewhere(id)) return;
   const t = S().tasks[id];
   if (!t) return;
   pending.add(id);
@@ -253,6 +280,7 @@ export async function setRepeat(id: string, rule: Repeat | null) {
 
 /** Repeating tasks: skip this copy; its date moves to the next scheduled one. */
 export async function skipTask(id: string) {
+  if (elsewhere(id)) return;
   const t = S().tasks[id];
   if (!t) return;
   pending.add(id);
@@ -272,7 +300,7 @@ export async function skipTask(id: string) {
   }
 }
 export const setPriority = (id: string, p: Priority) => patchTask(id, { priority: p }, { toast: `Priority set to ${PRIORITIES[p].name}` });
-export const setProject = (id: string, p: string) => patchTask(id, { projectId: p }, { toast: `Moved to ${S().projects[p]?.name}` });
+export const setProject = (id: string, p: string) => elsewhere(id) ? Promise.resolve() : patchTask(id, { projectId: p }, { toast: `Moved to ${S().projects[p]?.name}` });
 
 export async function moveTasks(ids: string[], dueDate: string) {
   const s = S();
@@ -282,11 +310,16 @@ export async function moveTasks(ids: string[], dueDate: string) {
   flash(prevs.map((t) => t.id));
   try {
     if (prevs.length === 1) {
-      const { task } = await api.patch<{ task: Task }>(`/api/tasks/${prevs[0].id}`, { dueDate });
+      const { task } = await forTask(prevs[0].id).patch<{ task: Task }>('', { dueDate });
       putTask(task);
     } else {
-      const { tasks } = await api.post<{ tasks: Task[] }>('/api/tasks/move', { ids: prevs.map((t) => t.id), dueDate });
-      tasks.forEach(putTask);
+      // Tasks from other instances move one by one, through their own instance.
+      const here = prevs.filter((t) => !isFeed(t.id)), there = prevs.filter((t) => isFeed(t.id));
+      const moved = await Promise.all([
+        here.length ? api.post<{ tasks: Task[] }>('/api/tasks/move', { ids: here.map((t) => t.id), dueDate }).then((r) => r.tasks) : [],
+        ...there.map((t) => forTask(t.id).patch<{ task: Task }>('', { dueDate }).then((r) => [r.task])),
+      ]);
+      moved.flat().forEach(putTask);
     }
     toast(prevs.length > 1 ? `Moved ${prevs.length} tasks to ${rel(dueDate, s.today)}` : `Moved to ${rel(dueDate, s.today)}`, () => {
       set({ toast: null });
@@ -351,7 +384,7 @@ export function openDrawer(id: string, editTitle = false) {
 export async function openTask(id: string) {
   if (!S().tasks[id]) {
     try {
-      const { task } = await api.get<{ task: Task }>(`/api/tasks/${id}`);
+      const { task } = await forTask(id).get<{ task: Task }>();
       set((s) => ({ tasks: { ...s.tasks, [task.id]: task } }));
     } catch {
       toast("That task isn't available anymore.", undefined, true);
@@ -599,9 +632,9 @@ export async function saveProject(p: { id: string | null; name: string; color: s
 
 // ---------- access-aware lookups used by menus ----------
 export const assignable = (s: State, projectId: string): User[] =>
-  Object.values(s.users).filter((u) => u.status !== 'disabled' && onProject(u, projectId));
+  localUsers(s).filter((u) => u.status !== 'disabled' && onProject(u, projectId));
 export const switchablePeople = (s: State): User[] =>
-  Object.values(s.users).filter((u) => u.status === 'active' && (u.id === s.me!.id || sharesWith(s, u)));
+  localUsers(s).filter((u) => u.status === 'active' && (u.id === s.me!.id || sharesWith(s, u)));
 export const projectList = (s: State): Project[] => myProjects(s);
 
 // ---------- app settings (admins) ----------
@@ -738,7 +771,7 @@ export async function addComment(id: string, text: string): Promise<boolean> {
   pending.add(id);
   mine.set(id, Date.now());
   try {
-    const { task } = await api.post<{ task: Task }>(`/api/tasks/${id}/comments`, { text });
+    const { task } = await forTask(id).post<{ task: Task }>('/comments', { text });
     putTask(task); // drops the cached history, so the drawer reloads it with the comment
     return true;
   } catch (e) {
@@ -751,6 +784,7 @@ export async function addComment(id: string, text: string): Promise<boolean> {
 
 /** Follow or stop following a task: me, or (`userId`) someone else on its project. */
 export async function setFollowing(id: string, follow: boolean, userId?: string) {
+  if (elsewhere(id)) return;
   const prev = S().tasks[id];
   if (!prev) return;
   const me = S().me!.id;
@@ -804,15 +838,15 @@ async function checklistCall(id: string, call: () => Promise<{ task: Task }>, op
   }
 }
 /** Adds one item, or several (one per line, e.g. pasted). */
-export const addChecklistItems = (id: string, text: string) => checklistCall(id, () => api.post(`/api/tasks/${id}/checklist`, { text }));
+export const addChecklistItems = (id: string, text: string) => checklistCall(id, () => forTask(id).post('/checklist', { text }));
 export const toggleChecklistItem = (id: string, itemId: string, done: boolean) =>
-  checklistCall(id, () => api.patch(`/api/tasks/${id}/checklist/${itemId}`, { done }),
+  checklistCall(id, () => forTask(id).patch(`/checklist/${itemId}`, { done }),
     (t) => ({ ...t, checklist: t.checklist.map((c) => (c.id === itemId ? { ...c, done } : c)) }));
 export const renameChecklistItem = (id: string, itemId: string, text: string) =>
-  checklistCall(id, () => api.patch(`/api/tasks/${id}/checklist/${itemId}`, { text }),
+  checklistCall(id, () => forTask(id).patch(`/checklist/${itemId}`, { text }),
     (t) => ({ ...t, checklist: t.checklist.map((c) => (c.id === itemId ? { ...c, text } : c)) }));
 export const removeChecklistItem = (id: string, itemId: string) =>
-  checklistCall(id, () => api.del(`/api/tasks/${id}/checklist/${itemId}`),
+  checklistCall(id, () => forTask(id).del(`/checklist/${itemId}`),
     (t) => ({ ...t, checklist: t.checklist.filter((c) => c.id !== itemId) }));
 
 // ---------- attachments ----------
@@ -820,6 +854,7 @@ export const attachmentUrl = (taskId: string, id: string, download = false) => `
 
 /** Uploads files to a task, one after another, with progress. Uses XHR because fetch can't report upload progress. */
 export async function uploadFiles(taskId: string, files: File[]) {
+  if (elsewhere(taskId)) return;
   const ok = files.filter((f) => f.size > 0 && f.size <= ATTACH_MAX_BYTES);
   const tooBig = files.filter((f) => f.size > ATTACH_MAX_BYTES);
   if (tooBig.length) toast(`${tooBig.map((f) => f.name).join(', ')}: files can be at most ${ATTACH_MAX_BYTES / 1024 / 1024} MB.`, undefined, true);
@@ -873,6 +908,7 @@ export async function removeAttachment(taskId: string, id: string, name: string)
 
 /** ⇧A: opens the task (if needed) and its file picker. */
 export function pickAttachments(id: string) {
+  if (elsewhere(id)) return;
   if (!S().attachmentsOn) { toast("Attachments aren't set up on this instance."); return; }
   const wasOpen = S().drawer === id;
   if (!wasOpen) openDrawer(id);
@@ -904,6 +940,7 @@ export async function resetIcon() {
 // ---------- archive (instead of delete) ----------
 /** Archives a task: it leaves every list at once (Undo brings it back). Restoring is in the project's view. */
 export async function archiveTask(id: string) {
+  if (elsewhere(id)) return;
   const t = S().tasks[id];
   if (!t) return;
   pending.add(id);

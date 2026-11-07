@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useState } from 'react';
+import { InstancesSheet } from './components/InstancesSheet';
 import { boot, closePop, goHome, openConnect, openHelp, openPop, openTask, sync } from './actions';
 import { updateBadge } from './push';
 import { checkForUpdate, updateSeen } from './updates';
@@ -113,6 +114,7 @@ export function App() {
       <Drawer />
       {s.help && <HelpSheet />}
       {s.connect && <ConnectSheet />}
+      {s.instancesOpen && <InstancesSheet today={s.today} />}
       {s.hookEdit && <WebhookSheet key={s.hookEdit} />}
       {s.projEdit && <ProjectEditor pe={s.projEdit} s={s} />}
       {s.toast && (
