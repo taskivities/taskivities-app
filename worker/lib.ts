@@ -27,7 +27,7 @@ export interface Env {
   ADMIN_EMAILS?: string;
   /** Where admins are told about new releases: a GitHub "owner/repo" (default taskivities/taskivities-app), or "off". */
   UPDATE_REPO?: string;
-  /** Optional: key for encrypting stored Gmail tokens. Defaults to one derived from GOOGLE_CLIENT_SECRET. */
+  /** Optional: key for encrypting stored Gmail and Outlook tokens. Defaults to one derived from GOOGLE_CLIENT_SECRET (Gmail) or MS_CLIENT_SECRET (Outlook). */
   TOKEN_KEY?: string;
   /** Attachments (R2). Missing on instances without a bucket: attachments are then off. */
   FILES?: R2Bucket;

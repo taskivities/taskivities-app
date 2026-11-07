@@ -5,56 +5,18 @@
 // Everything here fails soft: no connection, a missing permission, a revoked token or a Gmail error
 // all come back as a status, and the app falls back to "share the sign-in link yourself".
 import { type Env, nowIso } from './lib';
-import { type InviteInfo, inviteRaw } from './invite-mail';
+import { type InviteInfo, type SendResult, type SendStatus, inviteRaw } from './invite-mail';
+import { openToken, sealToken } from './token-crypto';
 
 export const GMAIL_SEND = 'https://www.googleapis.com/auth/gmail.send';
 
-export type SendStatus = 'sent' | 'not_connected' | 'failed';
-export interface SendResult {
-  status: SendStatus;
-  sent: string[];
-  failed: string[];
-  /** Why it fell back, for the admin (e.g. the connection expired). */
-  reason?: string;
-}
-
 interface TokenRow { user_id: string; email: string; refresh_token: string; scope: string }
 
-// ---------- encryption ----------
-// Key: TOKEN_KEY if set, otherwise derived from GOOGLE_CLIENT_SECRET (so there's nothing extra to set up).
-// Changing either just makes stored tokens unreadable: admins reconnect.
-async function key(env: Env) {
-  const material = env.TOKEN_KEY || env.GOOGLE_CLIENT_SECRET;
-  if (!material) return null;
-  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(material), 'HKDF', false, ['deriveKey']);
-  return crypto.subtle.deriveKey(
-    { name: 'HKDF', hash: 'SHA-256', salt: new TextEncoder().encode('taskivities'), info: new TextEncoder().encode('google-refresh-token') },
-    base,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt'],
-  );
-}
-const toB64 = (b: Uint8Array) => btoa(String.fromCharCode(...b));
-const fromB64 = (s: string) => Uint8Array.from(atob(s), (ch) => ch.charCodeAt(0));
-
-async function encrypt(env: Env, plain: string) {
-  const k = await key(env);
-  if (!k) throw new Error('No encryption key');
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, new TextEncoder().encode(plain)));
-  return `v1.${toB64(iv)}.${toB64(ct)}`;
-}
-async function decrypt(env: Env, stored: string): Promise<string | null> {
-  try {
-    const [v, iv, ct] = stored.split('.');
-    const k = await key(env);
-    if (v !== 'v1' || !k) return null;
-    return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(iv) }, k, fromB64(ct)));
-  } catch {
-    return null;
-  }
-}
+// ---------- encryption (worker/token-crypto.ts) ----------
+// Key: TOKEN_KEY if set, otherwise derived from GOOGLE_CLIENT_SECRET. Changing either makes stored tokens unreadable: admins reconnect.
+const INFO = 'google-refresh-token';
+const encrypt = (env: Env, plain: string) => sealToken(env.TOKEN_KEY || env.GOOGLE_CLIENT_SECRET, INFO, plain);
+const decrypt = (env: Env, stored: string) => openToken(env.TOKEN_KEY || env.GOOGLE_CLIENT_SECRET, INFO, stored);
 
 // ---------- the stored connection ----------
 const getRow = (db: D1Database, userId: string) =>

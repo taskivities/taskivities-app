@@ -5,7 +5,7 @@ import {
   type AppEnv, type EventRow, type ProjectRow, type TaskRow, type UserRow,
   TASK_COLS, bad, canSeeProject, notFound, mapEvent, mapProject, mapTask, mapUser, today,
 } from './lib';
-import { gmailStatus } from './gmail';
+import { inviteMailOptions, inviteMailStatus, signInWith } from './mailer';
 import { loadSettings } from './settings';
 import { prefsOf, pushKeys } from './push';
 import { inboxUnread } from './inbox';
@@ -30,13 +30,13 @@ const updateRepo = (raw: string | undefined) => {
 api.get('/bootstrap', async (c) => {
   const v = c.get('viewer');
   const db = c.env.DB;
-  const [users, members, projects, meta, settings, gmail] = await Promise.all([
+  const [users, members, projects, meta, settings, inviteMail] = await Promise.all([
     db.prepare('SELECT * FROM users ORDER BY name').all<UserRow>(),
     db.prepare('SELECT user_id, project_id FROM project_members').all<{ user_id: string; project_id: string }>(),
     db.prepare('SELECT * FROM projects WHERE archived = 0 ORDER BY name').all<ProjectRow>(),
     getMeta(db),
     loadSettings(db),
-    v.role === 'admin' ? gmailStatus(c.env, v.id) : null,
+    v.role === 'admin' ? inviteMailStatus(c.env, v.id) : null,
   ]);
   const visibleProjects = projects.results.filter((p) => canSeeProject(v, p.id));
   const visibleIds = new Set(visibleProjects.map((p) => p.id));
@@ -53,7 +53,8 @@ api.get('/bootstrap', async (c) => {
   const keys = pushKeys(c.env);
   const myRow = users.results.find((u) => u.id === v.id);
   const body: Bootstrap = {
-    me, users: list, projects: visibleProjects.map(mapProject), today: today(v), tz: v.tz, ...meta, settings, gmail, attachments: !!c.env.FILES,
+    me, users: list, projects: visibleProjects.map(mapProject), today: today(v), tz: v.tz, ...meta, settings, attachments: !!c.env.FILES,
+    inviteMail, inviteMailOptions: v.role === 'admin' ? inviteMailOptions(c.env) : [], signInWith: signInWith(c.env),
     push: keys ? { publicKey: keys.publicKey } : null, notify: prefsOf(myRow?.notify),
     updates: v.role === 'admin' ? updateRepo(c.env.UPDATE_REPO) : null,
     inboxUnread: await inboxUnread(db, v, myRow?.inbox_read_at ?? null),

@@ -1,7 +1,7 @@
 // The public demo's Worker. It wraps the app's own Worker (worker/index.ts) without changing it:
 //   • /login is a demo sign-in page: pick a sample person (Jordan, an admin; Sara, a member). No Google.
 //   • Uploads are kept as sample files under the visitor's file name (demo/files.ts).
-//   • Logo, name, wordmark and app icon changes and Gmail invites are turned off.
+//   • Logo, name, wordmark and app icon changes and Gmail and Outlook invites are turned off.
 //   • Every page of the app gets a "Demo" banner.
 //   • A Cron Trigger puts the sample data back (demo/reset.ts) and signs everyone out.
 // Kept apart from the app: nothing in worker/, shared/ or src/ knows about it. Deployed with demo/deploy.mjs.
@@ -118,6 +118,7 @@ export default {
     // No Google, Microsoft or WorkOS sign-in in the demo.
     if (path === '/auth/login' || path.startsWith('/auth/microsoft') || path.startsWith('/auth/workos')) return Response.redirect(new URL(`/login${url.search}`, url).toString(), 302);
     if (path === '/auth/gmail') return Response.redirect(new URL('/settings?gmail=unavailable', url).toString(), 302);
+    if (path === '/auth/outlook') return Response.redirect(new URL('/settings?outlook=unavailable', url).toString(), 302);
     if (method === 'PUT' && /^\/api\/admin\/settings\/(logo|icon|wordmark|name)$/.test(path))
       return json({ error: 'Changing the logo, name or app icon is turned off in the demo. On your own instance, admins change them here.' }, 403);
 

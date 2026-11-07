@@ -3,7 +3,7 @@ import { fmt } from '../../shared/dates';
 import { EMAIL_RE, isAdmin } from '../../shared/rules';
 import { DESCRIPTION_MAX, PROJECT_COLORS, type Role } from '../../shared/types';
 import { EFFORT_ORDER, EFFORT_TYPES, type EffortType } from '../../shared/effort';
-import { addPeople, archiveProject, connectGmail, copyInviteLink, loadArchivedProjects, openPop, resendInvite, restoreProject, saveProject, setManageTab } from '../actions';
+import { MAILBOX, addPeople, archiveProject, connectInviteMail, copyInviteLink, loadArchivedProjects, openPop, resendInvite, restoreProject, saveProject, setManageTab, signInHow } from '../actions';
 import { activeSelector, focusLater } from '../focus';
 import { S, set, useStore, type ManageTab, type ProjEdit, type State } from '../store';
 import { displayName, people } from '../util';
@@ -121,7 +121,7 @@ export function TeamPage() {
                   {u.status === 'invited' ? <span className="st inv">Invited · {fmt(u.addedAt.slice(0, 10)).split(', ')[1]}</span> : <span className="st ok">Active</span>}
                 </div>
                 <div className="tact">
-                  {u.status === 'invited' && (s.gmail ? (
+                  {u.status === 'invited' && (s.inviteMail ? (
                     <button className="icon-btn" data-act="resend" title="Email the invite again" aria-label={`Email the invite to ${u.email} again`}
                       onClick={() => void resendInvite(u.id)}>{I.mail()}</button>
                   ) : (
@@ -285,9 +285,16 @@ function InviteForm({ s }: { s: State }) {
       </div>
       <div className="inv-foot">
         <span className="muted-s inv-mail">
-          {s.gmail
-            ? <>{I.mail(13)} We'll email them an invite from {s.gmail.email}.</>
-            : <>They sign in with Google using exactly this address. <button className="linkish" data-act="gmail-connect" onClick={() => connectGmail('/manage')}>Connect Gmail</button> to email invites automatically.</>}
+          {s.inviteMail
+            ? <>{I.mail(13)} We'll email them an invite from {s.inviteMail.email}.</>
+            : <>
+                They {signInHow(s)} using exactly this address.
+                {s.inviteMailOptions[0] && <>
+                  {' '}<button className="linkish" data-act={`${s.inviteMailOptions[0]}-connect`} onClick={() => connectInviteMail(s.inviteMailOptions[0], '/manage')}>
+                    Connect {MAILBOX[s.inviteMailOptions[0]].name}
+                  </button> to email invites automatically.
+                </>}
+              </>}
         </span>
         <button className="btn-ghost" onClick={close}>Cancel</button>
         <button className="btn-primary" disabled={inv.busy} onClick={() => void submit()}>{inv.busy ? 'Adding…' : 'Add'}</button>

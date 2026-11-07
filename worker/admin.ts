@@ -3,7 +3,8 @@ import { Hono } from 'hono';
 import { EMAIL_RE } from '../shared/rules';
 import { isEffortType } from '../shared/effort';
 import { DESCRIPTION_MAX, PROJECT_COLORS, USER_COLORS, type Role } from '../shared/types';
-import { disconnect, sendInvites, type SendResult } from './gmail';
+import type { SendResult } from './invite-mail';
+import { disconnectInviteMail, sendInvites } from './mailer';
 import { checkIcons, checkName, checkSvg, loadSettings, saveIcons, saveLogo, saveName, saveWordmark } from './settings';
 import { webhookAdmin } from './webhooks';
 import { notify } from './push';
@@ -70,7 +71,7 @@ admin.post('/users', async (c) => {
     added.push(email);
   }
   if (stmts.length) await db.batch([...stmts, bumpDirectory(db)]);
-  // Email them from the admin's Gmail if it's connected. Never fails the add: the app falls back to the link.
+  // Email them from the admin's Gmail or Outlook if one is connected. Never fails the add: the app falls back to the link.
   const names = await projectNames(db, projects);
   const email = await emailInvites(c, added.map((to) => ({ to, role, projects: names })));
   return c.json({ added, skipped, email });
@@ -182,6 +183,7 @@ admin.post('/users/:id/disable', async (c) => {
   stmts.push(db.prepare("UPDATE users SET status = 'disabled', disabled_at = ?, disabled_by = ? WHERE id = ?").bind(now, v.id, id));
   stmts.push(db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id));
   stmts.push(db.prepare('DELETE FROM google_tokens WHERE user_id = ?').bind(id)); // and their Gmail connection
+  stmts.push(db.prepare('DELETE FROM microsoft_tokens WHERE user_id = ?').bind(id)); // or their Outlook one
   stmts.push(db.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').bind(id)); // and their devices' notifications
   stmts.push(auditStmt(db, v.id, 'user_disabled', id, { transferred: open.length, to: to ?? null }));
   stmts.push(bumpDirectory(db));
@@ -360,10 +362,10 @@ admin.put('/settings/wordmark', async (c) => {
 });
 admin.delete('/settings/wordmark', async (c) => c.json({ settings: await saveWordmark(c.env.DB, c.get('viewer').id, null) }));
 
-// ---------- Gmail for invite emails (connecting is a redirect: GET /auth/gmail) ----------
-admin.delete('/gmail', async (c) => {
+// ---------- Gmail or Outlook for invite emails (connecting is a redirect: GET /auth/gmail or /auth/outlook) ----------
+admin.delete('/invite-mail', async (c) => {
   const v = c.get('viewer');
-  await disconnect(c.env, v.id);
-  await auditStmt(c.env.DB, v.id, 'gmail_disconnected', v.id, null).run();
+  await disconnectInviteMail(c.env, v.id);
+  await auditStmt(c.env.DB, v.id, 'invite_mail_disconnected', v.id, null).run();
   return c.json({ ok: true });
 });

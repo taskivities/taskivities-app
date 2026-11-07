@@ -12,6 +12,11 @@ section into the new version's; `git push --follow-tags` publishes it.
 ### Added
 
 - **Sign in with Microsoft 365:** the sign-in page can offer **Continue with Microsoft** for your organization's own Microsoft 365 (Entra ID) accounts, next to or instead of Google and email sign-in. Only accounts in your organization, and guests it has invited, can use it, and as with Google they still have to be added on the People & projects page. To turn it on, register an app in Microsoft Entra and set the `MS_CLIENT_ID`, `MS_CLIENT_SECRET` and `MS_TENANT_ID` secrets (see the README). Entra client secrets expire, so note the date and replace it before then.
+- **Invite emails from Outlook:** on an instance with Microsoft sign-in, admins can connect their Outlook on the Settings page, and invites are emailed from their own Microsoft 365 mailbox, just as they can be from Gmail. The app asks Microsoft only for permission to send mail, never to read it. Add the `Mail.Send` and `offline_access` permissions to the Entra app first (see the README).
+
+### Fixed
+
+- Invite emails, the People & projects page and the copied-link message said to "sign in with Google" even on instances without Google sign-in. They now name the instance's own sign-in methods.
 
 ## v0.5.2 (2026-11-06)
 

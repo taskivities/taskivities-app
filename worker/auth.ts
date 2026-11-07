@@ -5,7 +5,9 @@ import { Hono, type MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { USER_COLORS, appName } from '../shared/types';
 import { loadSettings } from './settings';
-import { GMAIL_SEND, saveConnection } from './gmail';
+import { GMAIL_SEND, disconnect as disconnectGmail, saveConnection } from './gmail';
+import { GRAPH_ME, type GraphMe, emailOf, msBase as msBaseOf, msOn as msOnEnv, msTenant as msTenantOf } from './microsoft';
+import { OUTLOOK_SCOPE, disconnectOutlook, hasMailSend, saveOutlookConnection } from './outlook';
 import {
   type AppEnv, type Ctx, type UserRow, auditStmt, b64url, bumpDirectory, defaultTz, nowIso, randomToken, sha256, sha256hex, toViewer, uid, validTz,
 } from './lib';
@@ -126,6 +128,7 @@ async function gmailCallback(c: Ctx, code: string | undefined, error: string | u
   if (!info?.email || info.email.toLowerCase() !== user.email.toLowerCase()) { await revoke(); return c.redirect(withGmail(back, 'wrong_account')); }
   if (!t.refresh_token) return c.redirect(withGmail(back, 'failed'));
   await saveConnection(c.env, user.id, user.email, t.refresh_token, t.scope ?? GMAIL_SEND);
+  await disconnectOutlook(c.env, user.id); // one invite mailbox per admin
   await auditStmt(c.env.DB, user.id, 'gmail_connected', user.id, null).run();
   return c.redirect(withGmail(back, 'connected'));
 }
@@ -227,19 +230,12 @@ function sessionIdOf(token: string | undefined): string | null {
 // tenant's admin could set to anything (the "nOAuth" problem). That makes this tenant's admins trusted to say who's who:
 // they can set an account's `mail` to any address. A multi-tenant authority would extend that trust to every tenant in the
 // world, so msTenant() refuses anything but one organization's GUID or domain, and the button stays off until it's right.
+// The tenant checks live in worker/microsoft.ts, shared with Outlook invite emails.
 const MS_SCOPE = 'openid profile email User.Read';
 const MS_TENANT_HELP = 'Microsoft sign-in is off: MS_TENANT_ID must be your organization\'s tenant ID (a GUID) or one of its domains, never "common", "organizations" or "consumers".';
-/** Microsoft's own tenant for personal accounts: as open as "consumers". */
-const MS_CONSUMER_TENANT = '9188040d-6c67-4c5b-b112-36a304b66dad';
-const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
-/** The configured tenant, or null unless it names exactly one organization ("common" and friends have no dot, so they fail DOMAIN). */
-function msTenant(c: Ctx): string | null {
-  const t = (c.env.MS_TENANT_ID ?? '').trim().toLowerCase();
-  return (GUID.test(t) && t !== MS_CONSUMER_TENANT) || DOMAIN.test(t) ? t : null;
-}
-const msOn = (c: Ctx) => !!(c.env.MS_CLIENT_ID && c.env.MS_CLIENT_SECRET && msTenant(c));
-const msBase = (c: Ctx) => `https://login.microsoftonline.com/${msTenant(c)}/oauth2/v2.0`;
+const msTenant = (c: Ctx) => msTenantOf(c.env);
+const msOn = (c: Ctx) => msOnEnv(c.env);
+const msBase = (c: Ctx) => msBaseOf(c.env);
 const msRedirect = (c: Ctx) => `${new URL(c.req.url).origin}/auth/microsoft/callback`;
 
 authRoutes.get('/microsoft', async (c) => {
@@ -263,6 +259,10 @@ authRoutes.get('/microsoft', async (c) => {
 authRoutes.get('/microsoft/callback', async (c) => {
   const { code, state, error } = c.req.query();
   const saved = endOAuth(c, 'tv_ms');
+  if (saved.mode === 'outlook') {
+    if (!saved.state || saved.state !== state) return c.redirect(withOutlook(saved.next, 'expired'));
+    return outlookCallback(c, code, error, saved.verifier, saved.next);
+  }
   if (!msOn(c)) return c.redirect('/login');
   if (error || !code || !saved.state) return c.redirect(`/login?error=${error === 'access_denied' || !error ? 'cancelled' : 'microsoft'}`);
   if (saved.state !== state) return c.redirect('/login?error=expired');
@@ -270,15 +270,62 @@ authRoutes.get('/microsoft/callback', async (c) => {
     code, client_id: c.env.MS_CLIENT_ID!, client_secret: c.env.MS_CLIENT_SECRET!, redirect_uri: msRedirect(c), code_verifier: saved.verifier, scope: MS_SCOPE,
   });
   if (!t?.access_token) return c.redirect('/login?error=microsoft');
-  const me = await getJson<{ displayName?: string; mail?: string | null; userPrincipalName?: string }>(
-    'https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName', t.access_token,
-  );
+  const me = await getJson<GraphMe>(GRAPH_ME, t.access_token);
   if (!me) return c.redirect('/login?error=microsoft');
-  // A #EXT# principal is a guest from outside the tenant; only their invited outside address (`mail`) counts.
-  const email = me.mail || (me.userPrincipalName && !me.userPrincipalName.includes('#EXT#') ? me.userPrincipalName : null);
+  const email = emailOf(me);
   if (!email) return c.redirect('/login?error=unverified');
   return signIn(c, email, me.displayName ?? '', null, saved.next);
 });
+
+// ---------- Outlook for invite emails (admins, optional; see worker/outlook.ts) ----------
+// Same app registration and callback as Microsoft sign-in (the `outlook` mode in the cookie tells them apart), so
+// there's no extra redirect URI to register: only the Mail.Send permission, granted when an admin connects.
+/** Adds ?outlook=<result> to the page we go back to, so the app can say what happened. */
+const withOutlook = (path: string, result: string) => `${path}${path.includes('?') ? '&' : '?'}outlook=${result}`;
+
+authRoutes.get('/outlook', async (c) => {
+  const back = safeNext(c.req.query('next') || '/settings');
+  const user = await currentUser(c);
+  if (!user) return c.redirect(`/login?next=${encodeURIComponent(back)}`);
+  if (user.role !== 'admin') return c.redirect(withOutlook(back, 'forbidden'));
+  if (!msOn(c)) return c.redirect(withOutlook(back, 'unavailable'));
+  const pkce = await beginOAuth(c, 'tv_ms', back, 'outlook');
+  const u = new URL(`${msBase(c)}/authorize`);
+  u.search = new URLSearchParams({
+    client_id: c.env.MS_CLIENT_ID!,
+    redirect_uri: msRedirect(c),
+    response_type: 'code',
+    // Send only. Never Mail.Read: the app doesn't read mail. offline_access gives a refresh token, so invites can be sent later.
+    scope: OUTLOOK_SCOPE,
+    login_hint: user.email,
+    ...pkce,
+  }).toString();
+  return c.redirect(u.toString());
+});
+
+async function outlookCallback(c: Ctx, code: string | undefined, error: string | undefined, verifier: string, back: string) {
+  const user = await currentUser(c);
+  if (!user) return c.redirect('/login');
+  if (user.role !== 'admin') return c.redirect(withOutlook(back, 'forbidden'));
+  if (!msOn(c)) return c.redirect(withOutlook(back, 'unavailable'));
+  // consent_required / access_denied: the person (or their tenant's policy) didn't allow sending.
+  if (error) return c.redirect(withOutlook(back, error === 'access_denied' || error === 'consent_required' ? 'no_permission' : 'cancelled'));
+  if (!code) return c.redirect(withOutlook(back, 'cancelled'));
+  const t = await redeemCode<{ access_token?: string; refresh_token?: string; scope?: string }>(`${msBase(c)}/token`, {
+    code, client_id: c.env.MS_CLIENT_ID!, client_secret: c.env.MS_CLIENT_SECRET!, redirect_uri: msRedirect(c), code_verifier: verifier, scope: OUTLOOK_SCOPE,
+  });
+  if (!t?.access_token) return c.redirect(withOutlook(back, 'failed'));
+  if (!hasMailSend(t.scope)) return c.redirect(withOutlook(back, 'no_permission'));
+  const me = await getJson<GraphMe>(GRAPH_ME, t.access_token);
+  const email = me ? emailOf(me) : null;
+  // Invites go out from the mailbox they sign in with, so it must be the same Microsoft account.
+  if (!email || email.toLowerCase() !== user.email.toLowerCase()) return c.redirect(withOutlook(back, 'wrong_account'));
+  if (!t.refresh_token) return c.redirect(withOutlook(back, 'failed'));
+  await saveOutlookConnection(c.env, user.id, user.email, t.refresh_token, t.scope ?? OUTLOOK_SCOPE);
+  await disconnectGmail(c.env, user.id); // one invite mailbox per admin
+  await auditStmt(c.env.DB, user.id, 'outlook_connected', user.id, null).run();
+  return c.redirect(withOutlook(back, 'connected'));
+}
 
 /** Local development only: sign in as any existing user without Google. */
 authRoutes.get('/dev-login', async (c) => {

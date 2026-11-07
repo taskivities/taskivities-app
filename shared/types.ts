@@ -211,8 +211,12 @@ export interface Bootstrap {
   settings: AppSettings;
   /** Attachments are available on this instance (it has an R2 bucket). */
   attachments: boolean;
-  /** Admins: the Gmail address invites are emailed from, or null when not connected (then they share the link). */
-  gmail: { email: string } | null;
+  /** Admins: the mailbox invites are emailed from (their Gmail or Outlook), or null when neither is connected (then they share the link). */
+  inviteMail: { via: InviteMailVia; email: string } | null;
+  /** Admins: which mailboxes can be connected on this instance (each needs that provider's sign-in set up). */
+  inviteMailOptions: InviteMailVia[];
+  /** How people sign in here, e.g. ['Microsoft'], for "they sign in with … using this address". */
+  signInWith: string[];
   /** Notifications: the key devices subscribe with (null when the instance has no push keys), and my choices. */
   push: { publicKey: string } | null;
   notify: NotifyPrefs;
@@ -250,7 +254,10 @@ export interface WebhookRequestInfo {
   taskId: string | null;
 }
 
-/** What happened to the invite emails when people were added (worker/gmail.ts). */
+/** Where an admin's invite emails can go out from (worker/gmail.ts, worker/outlook.ts). */
+export type InviteMailVia = 'gmail' | 'outlook';
+
+/** What happened to the invite emails when people were added (worker/mailer.ts). */
 export interface InviteEmailResult {
   status: 'sent' | 'not_connected' | 'failed';
   sent: string[];

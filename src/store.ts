@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppSettings, ArchivedProject, InboxItem, NotifyPrefs, Priority, Project, Role, Task, TaskEvent, User, WebhookInfo } from '../shared/types';
+import type { AppSettings, ArchivedProject, InboxItem, InviteMailVia, NotifyPrefs, Priority, Project, Role, Task, TaskEvent, User, WebhookInfo } from '../shared/types';
 import type { EffortType } from '../shared/effort';
 import { NORMAL, NOTIFY_DEFAULTS } from '../shared/types';
 import type { PushState } from './push';
@@ -75,8 +75,12 @@ export interface State {
   version: number;
   dirVersion: number;
   settings: AppSettings;
-  /** Admins: Gmail address invites are emailed from (null = not connected). */
-  gmail: { email: string } | null;
+  /** Admins: the Gmail or Outlook mailbox invites are emailed from (null = neither connected). */
+  inviteMail: { via: InviteMailVia; email: string } | null;
+  /** Admins: which mailboxes can be connected on this instance. */
+  inviteMailOptions: InviteMailVia[];
+  /** How people sign in here, e.g. ['Microsoft']. */
+  signInWith: string[];
   /** Admins: webhooks (loaded on the Settings page), and the one open in the editor. */
   hooks: WebhookInfo[] | null;
   /** Light / dark / follow the system (this browser only). */
@@ -171,7 +175,9 @@ export const useStore = create<State>()(() => ({
   version: 0,
   dirVersion: 0,
   settings: { customLogo: false, logoVersion: '0', customIcon: false, iconVersion: '0', name: '', customWordmark: false, wordmarkVersion: '0' },
-  gmail: null,
+  inviteMail: null,
+  inviteMailOptions: [],
+  signInWith: [],
   hooks: null,
   theme: themePref(),
   hookEdit: null,

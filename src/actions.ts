@@ -4,7 +4,7 @@ import { type Repeat, describe } from '../shared/repeat';
 import { onProject } from '../shared/rules';
 import { type EffortType, effortFor, storedEffortLabel } from '../shared/effort';
 import { ATTACH_MAX_BYTES } from '../shared/types';
-import type { AppSettings, ArchivedProject, Bootstrap, InviteEmailResult, WebhookInfo, WebhookRequestInfo, Priority, Project, Role, SyncResponse, Task, TaskEvent, User } from '../shared/types';
+import type { AppSettings, ArchivedProject, Bootstrap, InviteEmailResult, InviteMailVia, WebhookInfo, WebhookRequestInfo, Priority, Project, Role, SyncResponse, Task, TaskEvent, User } from '../shared/types';
 import { PRIORITIES } from '../shared/types';
 import { api, ApiError } from './api';
 import { applyBrand } from './brand';
@@ -55,7 +55,8 @@ function applyDirectory(b: Bootstrap): Partial<State> {
   }
   applyBrand(b.settings);
   return {
-    me: b.me, users, projects, today: b.today, tz: b.tz, dirVersion: b.directoryVersion, settings: b.settings, gmail: b.gmail, attachmentsOn: b.attachments, viewUser, page,
+    me: b.me, users, projects, today: b.today, tz: b.tz, dirVersion: b.directoryVersion, settings: b.settings, attachmentsOn: b.attachments, viewUser, page,
+    inviteMail: b.inviteMail, inviteMailOptions: b.inviteMailOptions ?? [], signInWith: b.signInWith ?? [],
     pushKey: b.push?.publicKey ?? null, notify: b.notify, updateRepo: b.updates?.repo ?? null, inboxUnread: b.inboxUnread ?? 0,
     projSel: s.projSel === 'all' || s.projSel === 'multi' || projects[s.projSel] ? s.projSel : 'all',
     projDay: s.projDay || b.today,
@@ -69,7 +70,7 @@ export async function boot() {
     set({ ...applyDirectory(b), tasks: byId(t.tasks), version: t.version, range: { from: t.from, to: t.to }, ready: true, lastSync: Date.now() });
     const last = localStorage.getItem('tv:lastProject');
     set((s) => ({ draft: { ...s.draft, projectId: last && myProjects(s).some((p) => p.id === last) ? last : myProjects(s)[0]?.id ?? null } }));
-    gmailReturn();
+    inviteMailReturn();
     void syncPush();
     void checkForUpdate();
     // Opened from a notification (a new window): /?task=<id>.
@@ -472,11 +473,17 @@ export async function addPeople(emails: string[], role: Role, projects: string[]
 
 /** The sign-in page people are invited to. */
 export const inviteLink = () => `${location.origin}/login`;
+/** "sign in with Microsoft", "sign in with Google or Microsoft", or plain "sign in", for this instance. */
+export function signInHow(s: State = S()) {
+  const w = s.signInWith;
+  if (!w.length) return 'sign in';
+  return `sign in with ${w.length === 1 ? w[0] : `${w.slice(0, -1).join(', ')} or ${w[w.length - 1]}`}`;
+}
 const copyLinkAction = { label: 'Copy link', run: () => void copyInviteLink() };
 export async function copyInviteLink() {
   try {
     await navigator.clipboard.writeText(inviteLink());
-    toast('Sign-in link copied. They sign in with Google using the address you added.');
+    toast(`Sign-in link copied. They ${signInHow()} using the address you added.`);
   } catch {
     toast(`Copy this link: ${inviteLink()}`, undefined, true);
   }
@@ -490,8 +497,8 @@ function inviteToast(prefix: string, count: number, e: InviteEmailResult | undef
     return;
   }
   if (e?.reason) {
-    // Was connected, but it no longer works (expired, revoked, Gmail error): say so, and offer the link.
-    void refreshGmail();
+    // Was connected, but it no longer works (expired, revoked, Gmail or Outlook error): say so, and offer the link.
+    void refreshInviteMail();
     toast(`${prefix}, but the invite wasn't emailed. ${e.reason}`, undefined, true, copyLinkAction);
     return;
   }
@@ -509,42 +516,54 @@ export async function resendInvite(userId: string) {
   }
 }
 
-// ---------- Gmail for invite emails ----------
-async function refreshGmail() {
+// ---------- Gmail or Outlook for invite emails ----------
+/** The mailbox's name, and the company whose consent screen connecting goes through. */
+export const MAILBOX: Record<InviteMailVia, { name: string; company: string }> = {
+  gmail: { name: 'Gmail', company: 'Google' },
+  outlook: { name: 'Outlook', company: 'Microsoft' },
+};
+async function refreshInviteMail() {
   const b = await api.get<Bootstrap>('/api/bootstrap').catch(() => null);
-  if (b) set({ gmail: b.gmail });
+  if (b) set({ inviteMail: b.inviteMail });
 }
-/** Leaves the app for Google's consent screen; comes back to `back` with ?gmail=<result>. */
-export function connectGmail(back = location.pathname) {
-  location.href = `/auth/gmail?next=${encodeURIComponent(back)}`;
+/** Leaves the app for Google's or Microsoft's consent screen; comes back to `back` with ?gmail=<result> or ?outlook=<result>. */
+export function connectInviteMail(via: InviteMailVia, back = location.pathname) {
+  location.href = `/auth/${via}?next=${encodeURIComponent(back)}`;
 }
-export async function disconnectGmail() {
+export async function disconnectInviteMail() {
+  const name = MAILBOX[S().inviteMail?.via ?? 'gmail'].name;
   try {
-    await api.del('/api/admin/gmail');
-    set({ gmail: null });
-    toast("Gmail disconnected. Invites won't be emailed until you connect it again.");
+    await api.del('/api/admin/invite-mail');
+    set({ inviteMail: null });
+    toast(`${name} disconnected. Invites won't be emailed until you connect a mailbox again.`);
   } catch (e) {
     toastError(e);
   }
 }
-const GMAIL_RESULTS: Record<string, [string, boolean]> = {
-  connected: ['Gmail connected. Invites will be emailed from your address.', false],
-  cancelled: ["Gmail wasn't connected.", false],
-  no_permission: ["Gmail wasn't connected: the \"send email on your behalf\" permission wasn't allowed.", true],
-  wrong_account: ['Choose the Google account you sign in to Taskivities with.', true],
-  unavailable: ["Google sign-in isn't set up on this instance, so Gmail can't be connected.", true],
-  expired: ['That took too long. Try connecting Gmail again.', true],
-  failed: ["Google didn't finish connecting Gmail. Try again.", true],
-  forbidden: ['Only admins can connect Gmail.', true],
-};
-/** After coming back from Google: say what happened, and tidy the address bar. */
-function gmailReturn() {
+function connectResult(via: InviteMailVia, r: string): [string, boolean] {
+  const { name, company } = MAILBOX[via];
+  const app = S().settings.name || 'Taskivities';
+  const results: Record<string, [string, boolean]> = {
+    connected: [`${name} connected. Invites will be emailed from your address.`, false],
+    cancelled: [`${name} wasn't connected.`, false],
+    no_permission: [`${name} wasn't connected: the "send email on your behalf" permission wasn't allowed.`, true],
+    wrong_account: [`Choose the ${company} account you sign in to ${app} with.`, true],
+    unavailable: [`${company} sign-in isn't set up on this instance, so ${name} can't be connected.`, true],
+    expired: [`That took too long. Try connecting ${name} again.`, true],
+    failed: [`${company} didn't finish connecting ${name}. Try again.`, true],
+    forbidden: [`Only admins can connect ${name}.`, true],
+  };
+  return results[r] ?? results.failed;
+}
+/** After coming back from Google or Microsoft: say what happened, and tidy the address bar. */
+function inviteMailReturn() {
   const q = new URLSearchParams(location.search);
-  const r = q.get('gmail');
-  if (!r) return;
-  q.delete('gmail');
+  const via: InviteMailVia | null = q.has('outlook') ? 'outlook' : q.has('gmail') ? 'gmail' : null;
+  if (!via) return;
+  const r = q.get(via) ?? '';
+  q.delete(via);
   history.replaceState(null, '', `${location.pathname}${q.size ? `?${q}` : ''}`);
-  const [text, error] = GMAIL_RESULTS[r] ?? GMAIL_RESULTS.failed;
+  const [text, error] = connectResult(via, r);
   toast(text, undefined, error);
 }
 export async function updateUser(id: string, body: { role?: Role; projects?: string[] }, message?: string) {
