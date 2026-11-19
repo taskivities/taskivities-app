@@ -11,7 +11,7 @@ The design reference is [`docs/wireframes.html`](docs/wireframes.html). Open it 
 | App | React 19 + TypeScript, built with Vite, served as static assets by the Worker |
 | API | One Cloudflare Worker using [Hono](https://hono.dev) (`worker/`) |
 | Database | Cloudflare D1 (SQLite). Schema in `migrations/` |
-| Sign-in | Google OAuth (code + PKCE) and, optionally, Microsoft 365 (Entra ID, one organization's tenant, code + PKCE) and WorkOS AuthKit (emailed codes, Microsoft, passkeys) for people without Google; handled in the Worker, with HttpOnly session cookies stored in D1 |
+| Sign-in | Whichever admins set up in the app (Settings → Sign-in): codes sent by email (through Resend), Google OAuth (code + PKCE), Microsoft 365 (Entra ID, one organization's tenant, code + PKCE) and WorkOS AuthKit; handled in the Worker, with HttpOnly session cookies stored in D1. A new instance is set up with its setup key (`TOKEN_KEY`) |
 | Live updates | The browser polls `/api/sync?since=<version>` every 10s (every 60s when the tab is hidden) |
 | AI assistants | Remote MCP server at `/mcp` (Streamable HTTP) on the same Worker: Cloudflare's `agents` SDK (`McpAgent`, one Durable Object per session) behind `@cloudflare/workers-oauth-provider` (OAuth 2.1 + dynamic client registration, tokens in KV) |
 
@@ -90,10 +90,12 @@ scripts/tenant.mjs (per-instance deploys)   tenants/ (each instance's Cloudflare
   - Credentials and IP addresses in headers (`authorization`, cookies, `x-forwarded-*`, Cloudflare's client IP headers) are never stored. Pause keeps logging without creating tasks; "Stop & edit samples" goes back to collecting.
 - **Invite emails** (optional, per admin; `worker/mailbox.ts`):
   - An admin connects **their Gmail or their Outlook** (Microsoft 365) on the **Settings** page: whichever sign-in this instance offers (Gmail needs Google sign-in, Outlook needs Microsoft 365 sign-in). The provider is asked to **send only** (`gmail.send`, or Microsoft Graph `Mail.Send` plus `offline_access`): the app can send mail as them, never read it. After that, adding people (and the resend button on the People & projects page) emails each one an invite from the admin's own address, with a sign-in button. The email names the ways people can sign in on this instance.
-  - One mailbox per admin: connecting Outlook replaces a connected Gmail, and the other way round. The refresh token is stored encrypted (AES-GCM) in `mailboxes`, with a key derived from the provider's client secret (or the optional `TOKEN_KEY` secret, recommended since Entra client secrets are replaced every so often). Disconnecting deletes it (and revokes it at Google; Microsoft has no per-token revoke, and an unused one expires); disabling the person deletes it too.
+  - One mailbox per admin: connecting Outlook replaces a connected Gmail, and the other way round. The refresh token is stored encrypted (AES-GCM) in `mailboxes`, with the instance's data key (see *Sign-in settings and the setup key* below). Connections made before this version, sealed with the provider's client secret or `TOKEN_KEY`, are still read and moved over. Disconnecting deletes it (and revokes it at Google; Microsoft has no per-token revoke, and an unused one expires); disabling the person deletes it too.
   - **It never blocks adding people.** Not connected, the permission unticked, a revoked or expired token, the Gmail API off, an account without an Exchange Online mailbox, or a send error: the person is still added, and the admin is offered the sign-in link to share. A connection the provider no longer accepts is dropped so the app shows "not connected" again.
   - It reuses the sign-in callbacks (`/auth/callback`, `/auth/microsoft/callback`), so there's no extra redirect URI to register, and it only connects the account the admin signs in with.
-- **Sign-in:** only email addresses added by an admin can sign in. On a brand-new install, the **first person to sign in becomes the admin** (the check is one atomic insert, so only one person can win). The optional `ADMIN_EMAILS` secret names addresses that are always let in as admins, which is useful for getting back in if you lock yourself out.
+- **Sign-in:** only email addresses added by an admin can sign in. A brand-new instance asks for an email and its **setup key** (`TOKEN_KEY`), and that person becomes the admin (one atomic insert, so only one person can win); once anyone is in, the key signs nobody in. (An instance deployed without a `TOKEN_KEY` keeps the old rule: the first person to sign in becomes the admin.) The optional `ADMIN_EMAILS` secret names addresses that are always let in as admins, which is useful for getting back in if you lock yourself out.
+- **Sign-in settings** (`worker/signin-config.ts`, `worker/signin-settings.ts`): admins set up Google, Microsoft 365, WorkOS, email codes and the drive keys under **Settings → Sign-in**. They're kept in D1, encrypted with the instance's data key (`worker/secrets.ts`), and secrets never go back to the browser (only their last four characters). New Google, Microsoft or WorkOS credentials are saved only after a test sign-in with them works, and a change that would leave no way to sign in is refused. The page is on `/api` only, not `/v1`, so AI assistants' tokens can't change it.
+- **Email codes** (`worker/auth.ts`, migration 0022): 6 digits, 10 minutes, 5 tries, one use, and only in the browser that asked. Asking answers the same whether or not the address has access (only addresses with access are emailed), and is limited per address (one a minute, five an hour) and per IP address. Only a hash of each code is stored.
 - **Writes come only from the app's own pages:** they need the same origin plus a custom header, and the session cookie is `SameSite=Lax`. The one exception is `/mcp`, which takes an OAuth bearer token instead (see below).
 - **One set of task rules.** The REST API and the MCP tools both call `worker/tasks.ts` (`createTask`, `applyPatch`), so visibility, "assignee must be on the project" and "no past due dates" can't diverge.
 
@@ -137,7 +139,7 @@ npm run db:reset:local     # creates the local D1 database and loads the sample 
 npm run dev                # http://localhost:5173
 ```
 
-Open http://localhost:5173/login and use **Local development sign-in**, for example `jordan@example.com` (admin) or `sara@example.com` (member). This route only works when `DEV_LOGIN=1` is set and the request comes from localhost. Google isn't needed locally unless you want to try the real sign-in.
+Open http://localhost:5173/login and use **Local development sign-in**, for example `jordan@example.com` (admin) or `sara@example.com` (member). This route only works when `DEV_LOGIN=1` is set and the request comes from localhost. Google isn't needed locally unless you want to try the real sign-in. To try **Settings → Sign-in** or setting up a new instance, add a `TOKEN_KEY` to `.dev.vars` (see `.dev.vars.example`); setting up needs an empty database (`npm run db:reset:local` and then delete the sample people, or a fresh `.wrangler/state`).
 
 Useful commands: `npm run typecheck` · `npm run build` · `npm run db:migrate:local`. Local development uses `wrangler.jsonc` as it is (placeholder IDs, data under `.wrangler/state`); it doesn't need a `tenants/` file.
 
@@ -160,8 +162,9 @@ What makes an instance is a small file, `tenants/<instance>.env`, which is **not
 | `CLOUDFLARE_ACCOUNT_ID` (optional) | Needed when your login can reach several accounts | `npx wrangler whoami` |
 | `R2_BUCKET` (optional) | Storage for attachments; empty turns attachments off | Printed by `npx wrangler r2 bucket create <name>` (R2 must be turned on for the account first: Dashboard → R2) |
 | `CLOUDFLARE_PROFILE` (optional) | A different Cloudflare login for this instance (e.g. a client's own account) | Create one with `npx wrangler auth create <name>`; list them with `npx wrangler auth list` |
+| `TOKEN_KEY` | The instance's setup key, and the key its saved settings are encrypted with. Sent to the Worker with every deploy | Made by `npm run tenant -- create`, or added by the first `npm run deploy` of an older instance. **Never change it** (see below) |
 
-[`tenants/example.env`](tenants/example.env) explains each value in more detail. Secrets (the Google client) are never in the file: they're stored encrypted in Cloudflare, per Worker.
+[`tenants/example.env`](tenants/example.env) explains each value in more detail. `TOKEN_KEY` is the one secret in the file: keep `tenants/` private. Everything else secret (how people sign in, the email sender) is set up by admins in the app, not here.
 
 ### A new instance
 
@@ -172,29 +175,43 @@ What makes an instance is a small file, `tenants/<instance>.env`, which is **not
    ```
    This creates the D1 database `taskivities-acme`, the KV namespace `taskivities-acme-oauth` and, if R2 is turned on for the account, the bucket `taskivities-acme-files`, and writes `tenants/acme.env` with their IDs. Options: `--name <worker-name>` (default `taskivities-<instance>`), `--domain tasks.acme.com`, `--account <account id>`, `--profile <login profile>` (to create them in an account under another Cloudflare login).
    (Or create them yourself as the table above says, copy `tenants/example.env` to `tenants/acme.env` and fill it in.)
-3. **Create a Google OAuth client** at [console.cloud.google.com](https://console.cloud.google.com): *APIs & Services → Credentials → Create credentials → OAuth client ID*.
-   - Type: **Web application**.
-   - Authorized redirect URIs: `https://<WORKER_NAME>.<your-subdomain>.workers.dev/auth/callback` (and `https://<custom domain>/auth/callback` for each custom domain), plus `http://localhost:5173/auth/callback` if you also use it locally.
-   - Consent screen: *Internal* if everyone is in your Google Workspace. Otherwise use *External* and publish it, since external people such as clients are added by email. Scopes: `openid`, `email`, `profile`.
-   - One client can serve several instances: add each instance's redirect URI to it.
-   - **Optional, for invite emails:** in the same project, enable the **Gmail API** (*APIs & Services → Library → Gmail API → Enable*) and add the scope `https://www.googleapis.com/auth/gmail.send` on the consent screen (*Data access → Add or remove scopes*). Only that one: the app never asks for `gmail.readonly`. With an *Internal* consent screen there's nothing else to do. With *External*, `gmail.send` is a "sensitive" scope: until Google verifies the app, admins see an "unverified app" warning when connecting, and while the app is in *Testing* Google expires the connection after 7 days (the app then falls back to the link until they reconnect). Skip this and everything else works; invites are shared as a link.
-4. **Add the secrets** (you paste each value when asked):
-   ```bash
-   npm run tenant -- secret acme GOOGLE_CLIENT_ID
-   ```
-   ```bash
-   npm run tenant -- secret acme GOOGLE_CLIENT_SECRET
-   ```
-   Optional: `ADMIN_EMAILS` (comma-separated addresses that are always let in as admins).
-   - **Optional: Microsoft 365 sign-in** (see below): `MS_CLIENT_ID`, `MS_CLIENT_SECRET` and `MS_TENANT_ID`.
-   - **Optional: sign-in without Google** (see below): `WORKOS_CLIENT_ID` and `WORKOS_API_KEY`.
-5. **Deploy:**
+3. **Deploy:**
    ```bash
    npm run deploy -- acme
    ```
-   This creates or updates the database tables, builds the app, and deploys it to that instance's Worker. The MCP Durable Object and custom domains are set up on the first deploy.
-6. **Sign in right away:** on an empty install the first person to sign in becomes the admin. Add your team on the **People & projects** page, and upload your logo on the **Settings** page.
+   This creates or updates the database tables, builds the app, and deploys it to that instance's Worker, with its `TOKEN_KEY`. The MCP Durable Object and custom domains are set up on the first deploy.
+4. **Set it up:** open the app. A new instance asks for your email, your name and its **setup key**: the `TOKEN_KEY` line in `tenants/acme.env`. You're signed in as its admin.
+5. **Choose how people sign in**, under **Settings → Sign-in**: email codes, Google, Microsoft 365 or WorkOS (sections below). Each shows the exact redirect URI to paste into the provider. Then add your team on the **People & projects** page, and upload your logo on the **Settings** page.
+6. Optional: `npm run tenant -- secret acme ADMIN_EMAILS` (comma-separated addresses that are always let in as admins, a way back in if every admin is locked out).
 7. **Connect an assistant:** in Claude, add a custom connector with `https://<your-app-host>/mcp` and sign in. Nothing else to configure: assistants sign in through the same sign-in page.
+
+### Sign-in settings and the setup key
+
+Everything about how people sign in lives in the app, under **Settings → Sign-in** (admins only): nothing to redeploy, and the page shows each redirect URI to paste. The values are stored in the instance's database, encrypted with a random **data key**, which is itself encrypted with `TOKEN_KEY`. Secrets are never shown again, only their last four characters; leave a box empty to keep what's saved. New Google, Microsoft or WorkOS credentials go through a test sign-in first (any account will do) and are saved only if it works; new email settings send you a test email first.
+
+**Instances from before this version** keep working as they are: on the first request after updating, the sign-in secrets already set with `npm run tenant -- secret` (`GOOGLE_CLIENT_ID`, `MS_CLIENT_SECRET`, …) are copied into the app's settings, and from then on the app's value is the one used (changing or deleting the Worker secret later does nothing; change it in Settings). Their first `npm run deploy` adds a `TOKEN_KEY` to `tenants/<instance>.env`. Until an instance has one, Settings → Sign-in shows the deployment's values and can't change them.
+
+**Changing `TOKEN_KEY`:** don't, unless it leaked. To replace it, move the current value to a `TOKEN_KEY_OLD=` line, put a new one (43+ random characters, e.g. `openssl rand -base64 32`) in `TOKEN_KEY`, and deploy: the next request re-encrypts the data key, so nothing has to be entered again. Then delete the `TOKEN_KEY_OLD` line and run `npm run tenant -- wrangler <instance> secret delete TOKEN_KEY_OLD`. If the old key is lost, the saved settings can't be read: Settings → Sign-in says so and offers **Start over**, and admins enter them again (and reconnect invite mailboxes). Their sessions keep working meanwhile.
+
+### Sign-in with an email code (optional, Resend)
+
+People type their address on the sign-in page and get a 6-digit code: no Google or Microsoft account needed. The instance sends the codes through [Resend](https://resend.com) (its free tier covers a team's sign-ins; check [their pricing](https://resend.com/pricing)).
+
+1. In Resend, **add your domain** and add the DNS records it shows, so mail from it is delivered.
+2. Create an **API key** with *Sending access*.
+3. In the app: **Settings → Sign-in → Email codes**, tick *Let people sign in with a code sent to their email*, paste the API key, and enter a From address on that domain (e.g. `tasks@acme.com`) and, optionally, a From name (default: the app's name). **Save and send a test email** sends you one first, and saves only if Resend accepts it.
+
+The sign-in page then shows **Sign in with an email code**. Only addresses on the People & projects page are emailed a code, though the page answers the same either way.
+
+### Sign-in with Google (optional)
+
+1. Create an OAuth client at [console.cloud.google.com](https://console.cloud.google.com): *APIs & Services → Credentials → Create credentials → OAuth client ID*.
+   - Type: **Web application**.
+   - Authorized redirect URIs: the one **Settings → Sign-in → Google** shows (`https://<your-app-host>/auth/callback`; one for each custom domain), plus `http://localhost:5173/auth/callback` if you also use it locally.
+   - Consent screen: *Internal* if everyone is in your Google Workspace. Otherwise use *External* and publish it, since external people such as clients are added by email. Scopes: `openid`, `email`, `profile`.
+   - One client can serve several instances: add each instance's redirect URI to it.
+   - **Optional, for invite emails:** in the same project, enable the **Gmail API** (*APIs & Services → Library → Gmail API → Enable*) and add the scope `https://www.googleapis.com/auth/gmail.send` on the consent screen (*Data access → Add or remove scopes*). Only that one: the app never asks for `gmail.readonly`. With an *Internal* consent screen there's nothing else to do. With *External*, `gmail.send` is a "sensitive" scope: until Google verifies the app, admins see an "unverified app" warning when connecting, and while the app is in *Testing* Google expires the connection after 7 days (the app then falls back to the link until they reconnect). Skip this and everything else works; invites are shared as a link.
+2. In the app, **Settings → Sign-in → Google**: paste the client ID and secret, and **Save and test**. You sign in with Google once (any account); the settings are saved only if that works.
 
 ### Sign-in with Microsoft 365 (optional, Entra ID)
 
@@ -208,18 +225,8 @@ For teams whose accounts live in Microsoft 365, an instance can add a **Continue
 2. On the app's *Overview*, copy the **Application (client) ID** and the **Directory (tenant) ID**.
 3. *Certificates & secrets → New client secret*, and copy its **Value** (not the Secret ID). **Client secrets expire** (after 24 months at most): note the date, and before then make a new one and set it again, or Microsoft sign-in stops working.
 4. *API permissions:* the default **Microsoft Graph → User.Read** (delegated) is all sign-in needs. For **invite emails from Outlook** (optional), also add **Microsoft Graph → Mail.Send** and **offline_access** (both delegated): the app only ever sends, never reads. If your tenant doesn't let people consent to apps themselves, click **Grant admin consent**. Admins then connect Outlook on the Settings page; their account needs an Exchange Online mailbox.
-5. Set the secrets:
-   ```bash
-   npm run tenant -- secret acme MS_CLIENT_ID
-   ```
-   ```bash
-   npm run tenant -- secret acme MS_CLIENT_SECRET
-   ```
-   ```bash
-   npm run tenant -- secret acme MS_TENANT_ID
-   ```
-   `MS_TENANT_ID` is the Directory (tenant) ID, or one of your organization's verified domains such as `contoso.com`. It must name your organization: `common`, `organizations` and `consumers` are refused, the button stays hidden, and the Worker logs why.
-6. Deploy. The sign-in page shows **Continue with Microsoft** (below Google) whenever all three are set. An instance can also run on Microsoft alone, without the Google secrets: admins then email invites from Outlook instead of Gmail.
+5. In the app, **Settings → Sign-in → Microsoft 365**: paste the client ID, the secret's value, and the tenant: the Directory (tenant) ID, or one of your organization's verified domains such as `contoso.com`. It must name your organization: `common`, `organizations` and `consumers` are refused. **Save and test** signs you in with Microsoft once, and saves only if that works.
+6. The sign-in page shows **Continue with Microsoft**. An instance can also run on Microsoft alone, without Google: admins then email invites from Outlook instead of Gmail.
 
 One app registration can serve several instances in the same organization: add each one's redirect URI.
 
@@ -227,19 +234,13 @@ One app registration can serve several instances in the same organization: add e
 
 Google sign-in works for any address with a Google account, including work addresses that aren't Gmail (people can make one at Google for their existing email). For people who don't want one, an instance can add a **Continue with email** button, run by [WorkOS AuthKit](https://workos.com/authkit): its hosted page sends a sign-in code by email, and can also offer Microsoft, passkeys or other methods you turn on there. WorkOS's free tier covers this (check [their pricing](https://workos.com/pricing)).
 
-Nothing else changes: WorkOS only proves the email address. The address still has to be on the People & projects page (the first sign-in on an empty install still becomes the admin), roles and projects work the same, and assistants connecting over MCP can sign in either way. Taskivities keeps its own 30-day session and ends the WorkOS session at once, so signing out here signs out, and the next sign-in asks again.
+Nothing else changes: WorkOS only proves the email address. The address still has to be on the People & projects page, roles and projects work the same, and assistants connecting over MCP can sign in either way. Taskivities keeps its own 30-day session and ends the WorkOS session at once, so signing out here signs out, and the next sign-in asks again.
 
 1. Create an account at [dashboard.workos.com](https://dashboard.workos.com). Use the **Production** environment for live instances (Staging is for `http://localhost`).
 2. **Authentication:** turn on the methods to offer, for example **Magic Auth** (emailed codes), **Microsoft OAuth** and **Passkeys**. Google can stay off there: the app has its own Google button. If everyone on Microsoft is in your own organization, the app's own Microsoft sign-in (above) is tied to your tenant and needs no WorkOS account.
 3. **Redirects:** add `https://<your-app-host>/auth/workos/callback` for each instance (and `http://localhost:5173/auth/workos/callback` in Staging for local development). Set the **sign-in endpoint** (where AuthKit sends people to start a sign-in) to `https://<your-app-host>/auth/workos`.
-4. **API Keys:** copy the **Client ID** (`client_…`) and the **API key** (`sk_…`) into the instance:
-   ```bash
-   npm run tenant -- secret acme WORKOS_CLIENT_ID
-   ```
-   ```bash
-   npm run tenant -- secret acme WORKOS_API_KEY
-   ```
-5. Deploy. The sign-in page shows **Continue with email** whenever both are set; without them it shows Google only. An instance can also run on WorkOS alone, without the Google secrets (invite emails then need Gmail or Outlook, so they aren't available).
+4. **API Keys:** copy the **Client ID** (`client_…`) and the **API key** (`sk_…`) into **Settings → Sign-in → WorkOS AuthKit**, and **Save and test**.
+5. The sign-in page shows **Continue with email**. An instance can also run on WorkOS alone, without Google (invite emails then need Gmail or Outlook, so they aren't available). If you only need emailed codes, the built-in **email codes** above need no WorkOS account.
 
 One WorkOS environment can serve several instances: add each one's redirect URI.
 
@@ -253,24 +254,13 @@ Each drive turns on by itself once it's set up; the attach menu only lists the o
 2. *APIs & Services → Credentials → Create credentials → API key*. Restrict it: *Application restrictions → Websites*, `https://<your-app-host>/*` (and each custom domain, plus `http://localhost:5173/*` if you use it locally); *API restrictions →* the Google Picker API only.
 3. On the OAuth client (*Credentials →* the Web client the instance signs in with), add `https://<your-app-host>` under **Authorized JavaScript origins** (each custom domain too).
 4. *Google Auth Platform → Data access → Add or remove scopes*: add `https://www.googleapis.com/auth/drive.file`.
-5. Find the **project number** on the project's dashboard (*Cloud overview*), then set the two values:
-   ```bash
-   npm run tenant -- secret acme GOOGLE_PICKER_API_KEY
-   ```
-   ```bash
-   npm run tenant -- secret acme GOOGLE_APP_ID
-   ```
-   `GOOGLE_APP_ID` is the project number. Neither is really secret (the browser gets both), but setting them this way keeps them with the instance.
+5. Find the **project number** on the project's dashboard (*Cloud overview*), then enter it and the API key under **Settings → Sign-in → Files from Google Drive and OneDrive**.
 
 **OneDrive and SharePoint** use Microsoft's File Picker, with the same app registration as Microsoft sign-in (above), so `MS_CLIENT_ID` and `MS_TENANT_ID` must be set. In the Entra admin center, on that app registration:
 
 1. *Authentication → Add a platform → Single-page application*, redirect URI `https://<your-app-host>/picker-signin.html` (each custom domain too, and `http://localhost:5173/picker-signin.html` locally). The existing **Web** redirect for sign-in stays as it is.
 2. *API permissions → Add a permission*: **Microsoft Graph → Files.Read.All** (delegated), and **SharePoint → MyFiles.Read** and **AllSites.Read** (both delegated). Click **Grant admin consent** for your organization: the picker can't ask for SharePoint consent itself.
-3. Turn it on:
-   ```bash
-   npm run tenant -- secret acme MS_FILES
-   ```
-   and enter `on`.
+3. Turn it on under **Settings → Sign-in → Files from Google Drive and OneDrive**.
 
 People sign in to Microsoft in a popup the first time they pick (once per tab). Only accounts in your organization's tenant can pick files, and they need a OneDrive (open it once if it's new).
 
@@ -295,7 +285,7 @@ The admin's browser checks [the releases](https://github.com/taskivities/taskivi
 | `npm run deploy -- <instance>` | Migrate the database, build, deploy. Add `--dry-run` to build and check without deploying |
 | `npm run tenant -- list` | Lists the instances in `tenants/` |
 | `npm run db:migrate:remote -- <instance>` | Only the database migrations |
-| `npm run tenant -- secret <instance> <NAME>` | Sets a secret on that instance's Worker |
+| `npm run tenant -- secret <instance> <NAME>` | Sets a secret on that instance's Worker (e.g. `ADMIN_EMAILS`; sign-in is set up in the app) |
 | `npm run tenant -- wrangler <instance> <args…>` | Any other wrangler command for that instance, e.g. `tail` for live logs |
 
 With a single file in `tenants/`, the instance name can be left out. `TENANT=acme npm run deploy` works too. The script writes each instance's full config to `.wrangler/tenants/<instance>.json` (git-ignored) and runs everything against it; see `scripts/tenant.mjs`.

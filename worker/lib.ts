@@ -27,8 +27,18 @@ export interface Env {
   ADMIN_EMAILS?: string;
   /** Where admins are told about new releases: a GitHub "owner/repo" (default taskivities/taskivities-app), or "off". */
   UPDATE_REPO?: string;
-  /** Optional: key for encrypting stored invite-mailbox tokens. Defaults to one derived from GOOGLE_CLIENT_SECRET (Gmail) or MS_CLIENT_SECRET (Outlook). */
+  /**
+   * The instance's one deploy-time secret (tenants/<name>.env). It encrypts the settings admins save in the app
+   * (worker/secrets.ts), and it's the key the first person types to set up a new instance (worker/auth.ts).
+   * TOKEN_KEY_OLD, set only while changing it, lets the new key take over without entering anything again.
+   */
   TOKEN_KEY?: string;
+  TOKEN_KEY_OLD?: string;
+  /** Sign-in with a code sent by email: "on", plus a sender (worker/mailer.ts). Usually set in the app (Settings → Sign-in). */
+  EMAIL_CODES?: string;
+  RESEND_API_KEY?: string;
+  MAIL_FROM?: string;
+  MAIL_FROM_NAME?: string;
   /** Google Drive files (worker/cloud-files.ts): the Picker's API key and the Cloud project number. With GOOGLE_CLIENT_ID, all three turn it on. */
   GOOGLE_PICKER_API_KEY?: string;
   GOOGLE_APP_ID?: string;

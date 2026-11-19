@@ -1,7 +1,7 @@
 // The public demo's Worker. It wraps the app's own Worker (worker/index.ts) without changing it:
 //   • /login is a demo sign-in page: pick a sample person (Jordan, an admin; Sara, a member). No Google.
 //   • Uploads are kept as sample files under the visitor's file name (demo/files.ts).
-//   • Logo, name, wordmark and app icon changes and invite mailboxes (Gmail, Outlook) are turned off.
+//   • Logo, name, wordmark and app icon changes, sign-in settings and invite mailboxes (Gmail, Outlook) are turned off.
 //   • Every page of the app gets a "Demo" banner.
 //   • A Cron Trigger puts the sample data back (demo/reset.ts) and signs everyone out.
 // Kept apart from the app: nothing in worker/, shared/ or src/ knows about it. Deployed with demo/deploy.mjs.
@@ -19,8 +19,14 @@ const RESET = 'every 8 hours';
 const DEMO_NAME = 'Taskivities Demo';
 const OWN = 'https://www.taskivities.com/open-source';
 
-/** The app's environment, with the stand-in bucket so attachments are on (and keep nothing), and no drives to pick files from. */
-const demoEnv = (env: Env): Env => ({ ...env, FILES: demoFiles(env), GOOGLE_PICKER_API_KEY: undefined, MS_FILES: undefined });
+/**
+ * The app's environment, with the stand-in bucket so attachments are on (and keep nothing), and no drives to pick files
+ * from. No TOKEN_KEY either, so nothing saved in the app's sign-in settings is used (worker/signin-config.ts) and there's
+ * no setting-up page: the demo only has its sample people.
+ */
+const demoEnv = (env: Env): Env => ({
+  ...env, FILES: demoFiles(env), GOOGLE_PICKER_API_KEY: undefined, MS_FILES: undefined, TOKEN_KEY: undefined, TOKEN_KEY_OLD: undefined,
+});
 
 /** AI assistants' sessions get the same stand-in bucket. */
 export class TaskivitiesMCP extends AppMCP {
@@ -117,8 +123,12 @@ export default {
 
     if (path === '/login' && method === 'GET') return loginPage(req);
     if (path === '/auth/demo-login' && method === 'GET') return demoLogin(req, env);
-    // No Google, Microsoft or WorkOS sign-in in the demo.
-    if (path === '/auth/login' || path.startsWith('/auth/microsoft') || path.startsWith('/auth/workos')) return Response.redirect(new URL(`/login${url.search}`, url).toString(), 302);
+    // No Google, Microsoft, WorkOS or email-code sign-in in the demo, and nothing to set up.
+    if (path === '/auth/login' || path.startsWith('/auth/microsoft') || path.startsWith('/auth/workos') || path.startsWith('/auth/test/'))
+      return Response.redirect(new URL(`/login${url.search}`, url).toString(), 302);
+    if (method === 'POST' && (path === '/auth/setup' || path.startsWith('/auth/code'))) return json({ error: 'In the demo, pick a sample person to sign in as.' }, 403);
+    if (method !== 'GET' && path.startsWith('/api/admin/signin'))
+      return json({ error: 'Sign-in settings are turned off in the demo. On your own instance, admins set up how people sign in here.' }, 403);
     if (path === '/auth/gmail' || path === '/auth/outlook')
       return Response.redirect(new URL(`/settings?mailbox=unavailable&via=${path.slice(6)}`, url).toString(), 302);
     // Anyone can connect the demo to their own Taskivities (docs/multi-instance.md), as a sample person. But everyone

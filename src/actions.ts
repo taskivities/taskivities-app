@@ -91,6 +91,7 @@ export async function boot() {
     const t = await api.get<{ from: string; to: string; tasks: Task[]; version: number }>('/api/tasks');
     set({ ...applyDirectory(b), tasks: byId(t.tasks), version: t.version, range: { from: t.from, to: t.to }, ready: true, lastSync: Date.now() });
     mailboxReturn(); // reads its ?mailbox= result before the router tidies the address
+    signinTestReturn(); // likewise ?signin= (Settings → Sign-in, src/components/SigninSettings.tsx)
     // Other instances connected on this device (src/sources.ts), then the address: what to show (src/router.ts).
     const sourcesReady = loadSources();
     if (location.pathname === '/oauth/done') {
@@ -701,6 +702,29 @@ function mailboxReturn() {
   const [text, error] = (MAILBOX_RESULTS[r] ?? MAILBOX_RESULTS.failed)(MAILBOX[via]);
   toast(text, undefined, error);
 }
+const SIGNIN_RESULTS: Record<string, string> = {
+  ok: 'Signed in as {as}: it works, and it’s saved.',
+  cancelled: 'The test sign-in was cancelled, so nothing was saved.',
+  failed: 'The test sign-in didn’t work, so nothing was saved. Check the ID, the secret and the redirect URI.',
+  unverified: 'That account’s email isn’t verified, so it can’t prove the settings work. Nothing was saved: try another account.',
+  expired: 'The test took too long, so nothing was saved. Save and test again.',
+  forbidden: 'Only admins can change how people sign in.',
+};
+const SIGNIN_NAMES: Record<string, string> = { google: 'Google', microsoft: 'Microsoft 365', workos: 'WorkOS' };
+
+// ---------- back from testing new sign-in settings ----------
+/** Back from a test sign-in (?signin=<provider>&result=…): say how it went, and tidy the address bar. */
+function signinTestReturn() {
+  const q = new URLSearchParams(location.search);
+  const provider = q.get('signin');
+  if (!provider) return;
+  const result = q.get('result') ?? 'failed';
+  const text = (SIGNIN_RESULTS[result] ?? SIGNIN_RESULTS.failed).replace('{as}', q.get('as') ?? 'you');
+  for (const k of ['signin', 'result', 'as']) q.delete(k);
+  history.replaceState(null, '', `${location.pathname}${q.size ? `?${q}` : ''}`);
+  toast(`${SIGNIN_NAMES[provider] ?? 'Sign-in'}: ${text}`, undefined, result !== 'ok');
+}
+
 export async function updateUser(id: string, body: { role?: Role; projects?: string[] }, message?: string) {
   try {
     await api.patch(`/api/admin/users/${id}`, body);

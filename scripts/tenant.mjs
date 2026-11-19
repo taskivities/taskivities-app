@@ -10,13 +10,17 @@
 //   npm run tenant -- list
 //   npm run deploy -- <instance> [--dry-run]       migrate the database, build, deploy
 //   npm run db:migrate:remote -- <instance>
-//   npm run tenant -- secret <instance> <NAME>     e.g. GOOGLE_CLIENT_ID (you type the value)
+//   npm run tenant -- secret <instance> <NAME>     e.g. ADMIN_EMAILS (you type the value)
+//
+// Each instance's one secret is TOKEN_KEY, kept in its tenants/<instance>.env and sent to the Worker on deploy: the
+// first admin types it to set the instance up, and it encrypts what admins save in the app (Settings → Sign-in).
 //   npm run tenant -- wrangler <instance> <args…>  any other wrangler command, e.g. tail
 //
 // With only one instance file, <instance> can be left out. TENANT=<instance> also works.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -117,6 +121,9 @@ function load(name) {
   const domains = (e.CUSTOM_DOMAINS || '').split(',').map((d) => d.trim()).filter(Boolean);
   for (const d of domains) if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(d)) die(`${where}: "${d}" in CUSTOM_DOMAINS isn't a host name (no https://, no path).`);
   if (e.WORKERS_DEV === 'false' && !domains.length) die(`${where}: with WORKERS_DEV=false, add CUSTOM_DOMAINS or the app has no address.`);
+  for (const k of ['TOKEN_KEY', 'TOKEN_KEY_OLD']) {
+    if (e[k] && (e[k].length < 32 || /\s/.test(e[k]))) die(`${where}: ${k} must be at least 32 characters, with no spaces. Remove the line and deploy to get a new one.`);
+  }
   return { ...e, domains, file };
 }
 
@@ -186,7 +193,26 @@ function migrate(name, t, cfg) {
   wrangler(t, ['d1', 'migrations', 'apply', 'DB', '--remote', '--config', cfg]);
 }
 
+/** A new TOKEN_KEY: 32 random bytes, base64url (43 characters). */
+const newTokenKey = () => randomBytes(32).toString('base64url');
+
+/** Instances made before TOKEN_KEY existed get one, written into their file (and kept from then on). */
+function ensureTokenKey(name) {
+  const file = join(TENANTS, `${name}.env`);
+  if (parseEnv(file).TOKEN_KEY) return;
+  appendFileSync(file, `${readFileSync(file, 'utf8').endsWith('\n') ? '' : '\n'}${TOKEN_KEY_LINES(newTokenKey())}`);
+  console.log(`\n▸ Added a TOKEN_KEY to tenants/${name}.env (this instance's setup and encryption key: keep it, and never change it)`);
+}
+const TOKEN_KEY_LINES = (key) => [
+  '# This instance\'s one secret: type it on the sign-in page to set up a new instance (you become its admin), and it',
+  '# encrypts the settings admins save in the app (Settings → Sign-in). Never change it. To replace it anyway, move it to',
+  '# TOKEN_KEY_OLD, put the new one here, and deploy: saved settings move over. Without the old key they have to be entered again.',
+  `TOKEN_KEY=${key}`,
+  '',
+].join('\n');
+
 function deploy(name, dryRun) {
+  if (!dryRun) ensureTokenKey(name);
   const t = load(name);
   const cfg = generate(name, t);
   console.log(`\n▸ Instance "${name}" → Worker ${t.WORKER_NAME}${dryRun ? ' (dry run: nothing is changed)' : ''}`);
@@ -197,7 +223,20 @@ function deploy(name, dryRun) {
   rmSync(join(ROOT, 'dist'), { recursive: true, force: true });
   run('npx', ['vite', 'build'], { env: { TASKIVITIES_WRANGLER_CONFIG: cfg } });
   console.log(`\n▸ Deploying`);
-  wrangler(t, ['deploy', ...(dryRun ? ['--dry-run'] : [])]);
+  // TOKEN_KEY (and TOKEN_KEY_OLD while changing it) go up with the new version itself, so it never runs without them.
+  const keys = Object.fromEntries(['TOKEN_KEY', 'TOKEN_KEY_OLD'].filter((k) => t[k]).map((k) => [k, t[k]]));
+  const dir = mkdtempSync(join(tmpdir(), 'taskivities-'));
+  try {
+    const secrets = join(dir, 'secrets.json');
+    writeFileSync(secrets, JSON.stringify(keys), { mode: 0o600 });
+    wrangler(t, ['deploy', ...(dryRun ? ['--dry-run'] : ['--secrets-file', secrets])]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  if (t.TOKEN_KEY_OLD && !dryRun) {
+    console.log('\n  TOKEN_KEY_OLD is set: once the app has been opened, delete that line and run\n' +
+      `  npm run tenant -- wrangler ${name} secret delete TOKEN_KEY_OLD`);
+  }
   // Notifications need a key pair per instance: made once, the first time it's deployed, and kept as secrets.
   if (!dryRun) {
     ensurePushKeys({
@@ -255,15 +294,14 @@ function create(name, opts) {
         `CLOUDFLARE_ACCOUNT_ID=${opts.account || ''}`,
         `CLOUDFLARE_PROFILE=${opts.profile || ''}`,
         '',
+        TOKEN_KEY_LINES(newTokenKey()),
       ].join('\n'),
     );
     load(name); // checks what was written
     console.log(`\n✔ Wrote tenants/${name}.env\n\nNext:\n` +
-      `  npm run tenant -- secret ${name} GOOGLE_CLIENT_ID\n` +
-      `  npm run tenant -- secret ${name} GOOGLE_CLIENT_SECRET\n` +
-      `  (optional, Microsoft 365 sign-in: secret ${name} MS_CLIENT_ID, MS_CLIENT_SECRET and MS_TENANT_ID; see the README)\n` +
-      `  (optional, sign-in without Google: secret ${name} WORKOS_CLIENT_ID and WORKOS_API_KEY; see the README)\n` +
-      `  npm run deploy -- ${name}\n`);
+      `  npm run deploy -- ${name}\n` +
+      `  Then open the app: it asks for your email and the setup key, the TOKEN_KEY line in tenants/${name}.env.\n` +
+      '  You become the admin, and set up how everyone else signs in under Settings → Sign-in.\n');
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

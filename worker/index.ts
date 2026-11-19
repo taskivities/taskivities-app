@@ -7,6 +7,8 @@ import { type AppEnv, type Env, HttpError } from './lib';
 import { TaskivitiesMCP } from './mcp';
 import { oauthRoutes } from './oauth';
 import { serveIcon, serveLogo, serveManifest, serveWordmark } from './settings';
+import { withConfig } from './signin-config';
+import { signinAdmin } from './signin-settings';
 import { hookRoutes } from './webhooks';
 import { attachmentRoutes, uploadRoutes } from './attachments';
 import { cloudFileRoutes } from './cloud-files';
@@ -51,6 +53,8 @@ app.route('/auth', authRoutes);
 app.route('/authorize', oauthRoutes);
 
 app.use('/api/*', sameOrigin, requireSession);
+// Sign-in settings: /api only, never /v1 (see worker/signin-settings.ts).
+app.route('/api/admin/signin', signinAdmin);
 app.route('/api/admin', admin);
 app.route('/api/tasks', cloudFileRoutes);
 app.route('/api/tasks', attachmentRoutes);
@@ -93,7 +97,9 @@ function providerFor(origin: string) {
 }
 
 export default {
-  fetch: (req, env, ctx) => providerFor(new URL(req.url).origin).fetch(req, env, ctx),
+  // Settings admins saved in the app (sign-in, the email sender, drive keys) are laid over the environment first, so
+  // every route reads them as env values (worker/signin-config.ts).
+  fetch: async (req, env, ctx) => providerFor(new URL(req.url).origin).fetch(req, await withConfig(env), ctx),
   // The Cron Trigger (wrangler.jsonc): morning summaries, at 8:00 in each person's time zone.
   scheduled: (_event, env, ctx) => ctx.waitUntil(morningSummaries(env)),
 } satisfies ExportedHandler<Env>;

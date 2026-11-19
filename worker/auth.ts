@@ -1,10 +1,18 @@
-// Sign-in (Google, and optionally Microsoft 365 and WorkOS AuthKit) and cookie sessions. Each only proves an email address:
-// whoever it is gets in through signIn(), which lets in only emails that exist in `users` (added by an admin). On a brand-new
-// install the first person to sign in becomes the admin. ADMIN_EMAILS (optional) names extra addresses that are always let in as admins.
+// Sign-in (Google, Microsoft 365, WorkOS AuthKit and codes sent by email, each set up by admins in Settings → Sign-in)
+// and cookie sessions. Each only proves an email address: whoever it is gets in through admit(), which lets in only emails
+// that exist in `users` (added by an admin). ADMIN_EMAILS (optional) names extra addresses that are always let in as admins.
+//
+// A brand-new instance has nobody to sign in yet: its sign-in page asks for an email and the instance's setup key
+// (TOKEN_KEY, in tenants/<name>.env), and that person becomes the admin (POST /auth/setup). An instance without a
+// TOKEN_KEY keeps the old rule instead: the first person to sign in becomes the admin.
 import { Hono, type MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { USER_COLORS, appName } from '../shared/types';
+import { EMAIL_RE } from '../shared/rules';
 import { loadSettings } from './settings';
+import { codeMail, codesOn, sendMail } from './mailer';
+import { tokenKeyOk } from './secrets';
+import { type TestProvider, clearPending, loadPending, saveConfig } from './signin-config';
 import { mailboxProvider, saveMailbox } from './mailbox';
 import { GRAPH_ME, type GraphMe, emailOf, msBase as msBaseOf, msOn as msOnOf, msTenant as msTenantOf } from './microsoft';
 import {
@@ -58,6 +66,25 @@ async function redeemCode<T>(url: string, params: Record<string, string>): Promi
 const getJson = <T>(url: string, token: string): Promise<T | null> =>
   fetch(url, { headers: { authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json<T>() : null)).catch(() => null);
 
+/** Who a provider says signed in, or why it didn't work out. */
+type Identity = { email: string; name: string; picture: string | null } | { error: 'unverified' | 'failed' };
+
+/** Same-site requests from our own pages only (a custom header forces a CORS preflight): for the POSTs below. */
+function fromOurPage(c: Ctx) {
+  const origin = c.req.header('origin');
+  if (origin && new URL(origin).host !== new URL(c.req.url).host) return false;
+  return c.req.header('x-taskivities') === '1';
+}
+
+/** Compares two secrets without the time it takes saying how much of them matched. */
+async function sameSecret(a: string, b: string) {
+  const [x, y] = await Promise.all([sha256(a), sha256(b)]);
+  return crypto.subtle.timingSafeEqual(x, y);
+}
+
+const bootstrapAdmins = (env: Env) => (env.ADMIN_EMAILS || '').toLowerCase().split(/[\s,;]+/).filter(Boolean);
+const hasUsers = async (db: D1Database) => !!(await db.prepare('SELECT 1 AS x FROM users LIMIT 1').first());
+
 export const authRoutes = new Hono<AppEnv>();
 
 // ---------- Google ----------
@@ -70,8 +97,20 @@ const googleOn = (c: Ctx) => !!(c.env.GOOGLE_CLIENT_ID && c.env.GOOGLE_CLIENT_SE
 export const signInWith = (env: Env): string[] => [
   env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET ? 'Google' : '',
   msOnOf(env) ? 'Microsoft' : '',
-  env.WORKOS_CLIENT_ID && env.WORKOS_API_KEY ? 'email' : '',
+  (env.WORKOS_CLIENT_ID && env.WORKOS_API_KEY) || codesOn(env) ? 'email' : '',
 ].filter(Boolean);
+
+/** Google: trade the code for a token, then ask who it is (only a verified address counts). */
+async function googleIdentity(env: Env, code: string, verifier: string, redirect: string): Promise<Identity> {
+  const t = await redeemCode<{ access_token?: string }>(GOOGLE_TOKEN, {
+    code, client_id: env.GOOGLE_CLIENT_ID!, client_secret: env.GOOGLE_CLIENT_SECRET!, redirect_uri: redirect, code_verifier: verifier,
+  });
+  if (!t?.access_token) return { error: 'failed' };
+  const info = await getJson<{ email?: string; email_verified?: boolean; name?: string; picture?: string }>(GOOGLE_USERINFO, t.access_token);
+  if (!info) return { error: 'failed' };
+  if (!info.email || !info.email_verified) return { error: 'unverified' };
+  return { email: info.email, name: info.name ?? '', picture: info.picture ?? null };
+}
 
 authRoutes.get('/login', async (c) => {
   if (!googleOn(c)) return c.text('Google sign-in is not configured yet: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.', 500);
@@ -158,16 +197,12 @@ authRoutes.get('/callback', async (c) => {
     if (saved.state !== state) return c.redirect(withMailbox(saved.next, 'gmail', 'expired'));
     return mailboxCallback(c, 'gmail', code, error, saved.verifier, saved.next);
   }
+  if (saved.mode.startsWith('test:')) return testCallback(c, 'google', { code, state, error }, saved);
   if (error || !code || !saved.state) return c.redirect('/login?error=cancelled');
   if (saved.state !== state) return c.redirect('/login?error=expired');
-  const t = await redeemCode<{ access_token?: string }>(GOOGLE_TOKEN, {
-    code, client_id: c.env.GOOGLE_CLIENT_ID!, client_secret: c.env.GOOGLE_CLIENT_SECRET!, redirect_uri: redirectUri(c), code_verifier: saved.verifier,
-  });
-  if (!t?.access_token) return c.redirect('/login?error=google');
-  const info = await getJson<{ email?: string; email_verified?: boolean; name?: string; picture?: string }>(GOOGLE_USERINFO, t.access_token);
-  if (!info) return c.redirect('/login?error=google');
-  if (!info.email || !info.email_verified) return c.redirect('/login?error=unverified');
-  return signIn(c, info.email, info.name ?? '', info.picture ?? null, saved.next);
+  const id = await googleIdentity(c.env, code, saved.verifier, redirectUri(c));
+  if ('error' in id) return c.redirect(`/login?error=${id.error === 'unverified' ? 'unverified' : 'google'}`);
+  return signIn(c, id.email, id.name, id.picture, saved.next);
 });
 
 // ---------- WorkOS AuthKit (optional; on when WORKOS_CLIENT_ID and WORKOS_API_KEY are set) ----------
@@ -178,11 +213,18 @@ const WORKOS = 'https://api.workos.com/user_management';
 const workosOn = (c: Ctx) => !!(c.env.WORKOS_CLIENT_ID && c.env.WORKOS_API_KEY);
 const workosRedirect = (c: Ctx) => `${new URL(c.req.url).origin}/auth/workos/callback`;
 
-/** What the sign-in page needs: which buttons to show, and the team's name and wordmark. */
+/**
+ * What the sign-in page needs: which buttons to show, whether the instance still has to be set up (nobody in it yet,
+ * and a setup key to do it with), and the team's name and wordmark.
+ */
 authRoutes.get('/methods', async (c) => {
   const st = await loadSettings(c.env.DB);
   if (c.env.MS_CLIENT_ID && !msTenant(c)) console.warn(MS_TENANT_HELP);
-  return c.json({ google: googleOn(c), microsoft: msOn(c), workos: workosOn(c), name: appName(st), wordmark: st.customWordmark ? st.wordmarkVersion : null });
+  const setup = tokenKeyOk(c.env) && !(await hasUsers(c.env.DB));
+  return c.json({
+    google: googleOn(c), microsoft: msOn(c), workos: workosOn(c), code: codesOn(c.env), setup,
+    name: appName(st), wordmark: st.customWordmark ? st.wordmarkVersion : null,
+  });
 });
 
 authRoutes.get('/workos', async (c) => {
@@ -199,18 +241,26 @@ authRoutes.get('/workos', async (c) => {
 authRoutes.get('/workos/callback', async (c) => {
   const { code, state, error } = c.req.query();
   const saved = endOAuth(c, 'tv_workos');
+  if (saved.mode.startsWith('test:')) return testCallback(c, 'workos', { code, state, error }, saved);
   if (!workosOn(c)) return c.redirect('/login');
   if (error || !code) return c.redirect(`/login?error=${error === 'access_denied' || !error ? 'cancelled' : 'workos'}`);
   if (!saved.state || saved.state !== state) return c.redirect('/login?error=expired');
+  const id = await workosIdentity(c, c.env, code);
+  if ('error' in id) return c.redirect(`/login?error=${id.error === 'unverified' ? 'unverified' : 'workos'}`);
+  return signIn(c, id.email, id.name, id.picture, saved.next);
+});
+
+/** WorkOS: trade the code for the user, and end the WorkOS session at once (Taskivities keeps its own). */
+async function workosIdentity(c: Ctx, env: Env, code: string): Promise<Identity> {
   const res = await fetch(`${WORKOS}/authenticate`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      client_id: c.env.WORKOS_CLIENT_ID, client_secret: c.env.WORKOS_API_KEY, grant_type: 'authorization_code', code,
+      client_id: env.WORKOS_CLIENT_ID, client_secret: env.WORKOS_API_KEY, grant_type: 'authorization_code', code,
       ip_address: c.req.header('cf-connecting-ip'), user_agent: c.req.header('user-agent'),
     }),
   }).catch(() => null);
-  if (!res?.ok) return c.redirect('/login?error=workos');
+  if (!res?.ok) return { error: 'failed' };
   const r = await res.json<{
     user?: { email?: string; email_verified?: boolean; first_name?: string | null; last_name?: string | null; profile_picture_url?: string | null };
     access_token?: string;
@@ -219,15 +269,14 @@ authRoutes.get('/workos/callback', async (c) => {
   if (sid) {
     c.executionCtx.waitUntil(fetch(`${WORKOS}/sessions/revoke`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${c.env.WORKOS_API_KEY}` },
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${env.WORKOS_API_KEY}` },
       body: JSON.stringify({ session_id: sid }),
     }).catch(() => undefined));
   }
   const u = r.user;
-  if (!u?.email || u.email_verified === false) return c.redirect('/login?error=unverified');
-  const name = [u.first_name, u.last_name].filter(Boolean).join(' ');
-  return signIn(c, u.email, name, u.profile_picture_url || null, saved.next);
-});
+  if (!u?.email || u.email_verified === false) return { error: 'unverified' };
+  return { email: u.email, name: [u.first_name, u.last_name].filter(Boolean).join(' '), picture: u.profile_picture_url || null };
+}
 
 /** The WorkOS session id ("sid") inside its access token. The token came straight from WorkOS, so it isn't re-verified. */
 function sessionIdOf(token: string | undefined): string | null {
@@ -281,18 +330,180 @@ authRoutes.get('/microsoft/callback', async (c) => {
     if (saved.state !== state) return c.redirect(withMailbox(saved.next, 'outlook', 'expired'));
     return mailboxCallback(c, 'outlook', code, error, saved.verifier, saved.next);
   }
+  if (saved.mode.startsWith('test:')) return testCallback(c, 'microsoft', { code, state, error }, saved);
   if (!msOn(c)) return c.redirect('/login');
   if (error || !code || !saved.state) return c.redirect(`/login?error=${error === 'access_denied' || !error ? 'cancelled' : 'microsoft'}`);
   if (saved.state !== state) return c.redirect('/login?error=expired');
-  const t = await redeemCode<{ access_token?: string }>(`${msBase(c)}/token`, {
-    code, client_id: c.env.MS_CLIENT_ID!, client_secret: c.env.MS_CLIENT_SECRET!, redirect_uri: msRedirect(c), code_verifier: saved.verifier, scope: MS_SCOPE,
+  const id = await msIdentity(c.env, code, saved.verifier, msRedirect(c));
+  if ('error' in id) return c.redirect(`/login?error=${id.error === 'unverified' ? 'unverified' : 'microsoft'}`);
+  return signIn(c, id.email, id.name, id.picture, saved.next);
+});
+
+/** Microsoft: trade the code for a token at the tenant, then ask Graph who it is (see above for why Graph). */
+async function msIdentity(env: Env, code: string, verifier: string, redirect: string): Promise<Identity> {
+  const t = await redeemCode<{ access_token?: string }>(`${msBaseOf(env)}/token`, {
+    code, client_id: env.MS_CLIENT_ID!, client_secret: env.MS_CLIENT_SECRET!, redirect_uri: redirect, code_verifier: verifier, scope: MS_SCOPE,
   });
-  if (!t?.access_token) return c.redirect('/login?error=microsoft');
+  if (!t?.access_token) return { error: 'failed' };
   const me = await getJson<GraphMe>(GRAPH_ME, t.access_token);
-  if (!me) return c.redirect('/login?error=microsoft');
+  if (!me) return { error: 'failed' };
   const email = emailOf(me);
-  if (!email) return c.redirect('/login?error=unverified');
-  return signIn(c, email, me.displayName ?? '', null, saved.next);
+  return email ? { email, name: me.displayName ?? '', picture: null } : { error: 'unverified' };
+}
+
+// ---------- trying new credentials before they're saved (Settings → Sign-in → "Save and test") ----------
+// The admin's browser goes through a real sign-in with the waiting credentials (worker/signin-config.ts), on the usual
+// callback (the `test:<nonce>` mode in the PKCE cookie tells it apart), so there's no extra redirect URI. Any verified
+// account proves they work, not just the admin's own; nobody is signed in by it. Only then are they saved.
+const testDone = (provider: TestProvider, result: string, as?: string) =>
+  `/settings?${new URLSearchParams({ signin: provider, result, ...(as ? { as } : {}) })}`;
+
+authRoutes.get('/test/:provider{google|microsoft|workos}', async (c) => {
+  const provider = c.req.param('provider') as TestProvider;
+  const nonce = c.req.query('nonce') ?? '';
+  const user = await currentUser(c);
+  if (!user) return c.redirect('/login?next=/settings');
+  if (user.role !== 'admin') return c.redirect(testDone(provider, 'forbidden'));
+  const p = await loadPending(c.env, nonce, provider);
+  if (!p) return c.redirect(testDone(provider, 'expired'));
+  const env: Env = { ...c.env, ...p.values };
+  const mode = `test:${nonce}`;
+  if (provider === 'workos') {
+    const { state } = await beginOAuth(c, 'tv_workos', '/settings', mode);
+    const u = new URL(`${WORKOS}/authorize`);
+    u.search = new URLSearchParams({ client_id: env.WORKOS_CLIENT_ID!, redirect_uri: workosRedirect(c), response_type: 'code', provider: 'authkit', state }).toString();
+    return c.redirect(u.toString());
+  }
+  const google = provider === 'google';
+  const pkce = await beginOAuth(c, google ? 'tv_oauth' : 'tv_ms', '/settings', mode);
+  const u = new URL(google ? GOOGLE_AUTHORIZE : `${msBaseOf(env)}/authorize`);
+  u.search = new URLSearchParams({
+    client_id: (google ? env.GOOGLE_CLIENT_ID : env.MS_CLIENT_ID)!, redirect_uri: google ? redirectUri(c) : msRedirect(c),
+    response_type: 'code', scope: google ? 'openid email profile' : MS_SCOPE, prompt: 'select_account', ...pkce,
+  }).toString();
+  return c.redirect(u.toString());
+});
+
+async function testCallback(
+  c: Ctx, provider: TestProvider, q: { code?: string; state?: string; error?: string }, saved: { state: string; verifier: string; mode: string },
+) {
+  const user = await currentUser(c);
+  if (!user || user.role !== 'admin') return c.redirect(testDone(provider, 'forbidden'));
+  const p = await loadPending(c.env, saved.mode.slice('test:'.length), provider);
+  if (!p || !saved.state || saved.state !== q.state) return c.redirect(testDone(provider, 'expired'));
+  await clearPending(c.env);
+  if (q.error || !q.code) return c.redirect(testDone(provider, 'cancelled'));
+  const env: Env = { ...c.env, ...p.values };
+  const id = provider === 'google' ? await googleIdentity(env, q.code, saved.verifier, redirectUri(c))
+    : provider === 'microsoft' ? await msIdentity(env, q.code, saved.verifier, msRedirect(c))
+    : await workosIdentity(c, env, q.code);
+  if ('error' in id) return c.redirect(testDone(provider, id.error));
+  await saveConfig(c.env, user.id, p.values);
+  await auditStmt(c.env.DB, user.id, 'signin_settings_changed', null, { provider, keys: Object.keys(p.values), tested_with: id.email }).run();
+  return c.redirect(testDone(provider, 'ok', id.email));
+}
+
+// ---------- setting up a new instance: the first admin, with the setup key ----------
+authRoutes.post('/setup', async (c) => {
+  if (!fromOurPage(c)) return c.json({ error: 'Bad origin' }, 403);
+  if (!tokenKeyOk(c.env)) return c.json({ error: 'This instance has no setup key. Add TOKEN_KEY to its tenants/<instance>.env file and deploy again.' }, 409);
+  const b = await c.req.json<{ email?: unknown; name?: unknown; key?: unknown; next?: unknown }>().catch(() => ({} as Record<string, unknown>));
+  const email = typeof b.email === 'string' ? b.email.trim().toLowerCase() : '';
+  const name = typeof b.name === 'string' ? b.name.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+  const key = typeof b.key === 'string' ? b.key.trim() : '';
+  if (!EMAIL_RE.test(email)) return c.json({ error: 'Enter your email address.' }, 400);
+  const db = c.env.DB;
+  if (await hasUsers(db)) return c.json({ error: 'This instance is already set up. Sign in instead.' }, 409);
+  if (!key || !(await sameSecret(key, c.env.TOKEN_KEY!))) {
+    return c.json({ error: "That isn't this instance's setup key. It's the TOKEN_KEY line in tenants/<instance>.env." }, 403);
+  }
+  const id = uid(), now = nowIso();
+  // One conditional INSERT, so if two people race, only one becomes the admin.
+  await db.prepare(
+    `INSERT INTO users (id, email, name, color, role, status, added_by, added_at, last_seen_at)
+     SELECT ?, ?, ?, ?, 'admin', 'active', NULL, ?, ? WHERE NOT EXISTS (SELECT 1 FROM users)`,
+  ).bind(id, email, name, USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)], now, now).run();
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').bind(id).first<UserRow>();
+  if (!user) return c.json({ error: 'This instance is already set up. Sign in instead.' }, 409);
+  await createSession(c, user.id, [bumpDirectory(db), auditStmt(db, user.id, 'instance_set_up', user.id, { email })]);
+  return c.json({ next: safeNext(typeof b.next === 'string' ? b.next : null) });
+});
+
+// ---------- codes sent by email (on when set up in Settings → Sign-in; worker/mailer.ts sends them) ----------
+// Asking always answers the same, whether or not the address has access, and every ask is counted for the limits;
+// only addresses with access are emailed. A code is 6 digits, lasts CODE_MINUTES, allows CODE_TRIES guesses, works
+// once, and only in the browser that asked (the row id is in its cookie).
+const CODE_MINUTES = 10;
+const CODE_TRIES = 5;
+const CODE_COOKIE = 'tv_code';
+
+authRoutes.post('/code', async (c) => {
+  if (!fromOurPage(c)) return c.json({ error: 'Bad origin' }, 403);
+  if (!codesOn(c.env)) return c.json({ error: "Email codes aren't set up on this instance." }, 404);
+  const b = await c.req.json<{ email?: unknown }>().catch(() => ({} as Record<string, unknown>));
+  const email = typeof b.email === 'string' ? b.email.trim().toLowerCase() : '';
+  if (!EMAIL_RE.test(email) || email.length > 254) return c.json({ error: 'Enter your email address.' }, 400);
+  const db = c.env.DB;
+  const ip = c.req.header('cf-connecting-ip') ?? '';
+  const now = Date.now();
+  const ago = (ms: number) => new Date(now - ms).toISOString();
+  const n = (await db.prepare(
+    `SELECT (SELECT COUNT(*) FROM login_codes WHERE email = ?1 AND created_at > ?2) AS minute,
+            (SELECT COUNT(*) FROM login_codes WHERE email = ?1 AND created_at > ?3) AS hour,
+            (SELECT COUNT(*) FROM login_codes WHERE ip = ?4 AND ?4 != '' AND created_at > ?3) AS ip`,
+  ).bind(email, ago(60_000), ago(3_600_000), ip).first<{ minute: number; hour: number; ip: number }>())!;
+  if (n.minute > 0) return c.json({ error: 'A code was just sent. Wait a minute before asking for another.' }, 429);
+  if (n.hour >= 5 || n.ip >= 20) return c.json({ error: 'Too many codes were asked for. Try again in an hour.' }, 429);
+
+  const id = randomToken(18);
+  const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, '0');
+  const [user, st] = await Promise.all([
+    db.prepare('SELECT status FROM users WHERE email = ?').bind(email).first<{ status: string }>(),
+    loadSettings(db),
+    db.batch([
+      db.prepare('INSERT INTO login_codes (id, email, code_hash, ip, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(id, email, await sha256hex(`${id}:${code}`), ip || null, nowIso(), new Date(now + CODE_MINUTES * 60_000).toISOString()),
+      db.prepare('DELETE FROM login_codes WHERE created_at < ?').bind(ago(86_400_000)),
+    ]),
+  ]);
+  setCookie(c, CODE_COOKIE, id, { ...cookieBase(c), path: '/auth', maxAge: CODE_MINUTES * 60 });
+  if ((user && user.status !== 'disabled') || bootstrapAdmins(c.env).includes(email)) {
+    const app = appName(st);
+    // Sent after answering, so how long the answer takes doesn't say whether the address has access.
+    c.executionCtx.waitUntil(sendMail(c.env, codeMail(email, app, code, CODE_MINUTES), c.env.MAIL_FROM_NAME || app).then((r) => {
+      if (!r.ok) console.error(`Sign-in code not sent: ${r.error}`);
+    }));
+  }
+  return c.json({ ok: true });
+});
+
+authRoutes.post('/code/verify', async (c) => {
+  if (!fromOurPage(c)) return c.json({ error: 'Bad origin' }, 403);
+  if (!codesOn(c.env)) return c.json({ error: "Email codes aren't set up on this instance." }, 404);
+  const b = await c.req.json<{ code?: unknown; next?: unknown }>().catch(() => ({} as Record<string, unknown>));
+  const code = String(b.code ?? '').replace(/\D/g, '');
+  const id = getCookie(c, CODE_COOKIE);
+  const expired = (why = 'That code has expired.') => {
+    deleteCookie(c, CODE_COOKIE, { path: '/auth' });
+    return c.json({ error: `${why} Ask for a new one.`, expired: true }, 400);
+  };
+  if (!id) return expired();
+  const db = c.env.DB;
+  // Counts the try first, so guesses can't race past the limit.
+  const row = await db.prepare(
+    'UPDATE login_codes SET attempts = attempts + 1 WHERE id = ? AND used_at IS NULL AND attempts < ? AND expires_at > ? RETURNING email, code_hash, attempts',
+  ).bind(id, CODE_TRIES, nowIso()).first<{ email: string; code_hash: string; attempts: number }>();
+  if (!row) return expired();
+  if (code.length !== 6 || !(await sameSecret(await sha256hex(`${id}:${code}`), row.code_hash))) {
+    const left = CODE_TRIES - row.attempts;
+    if (left <= 0) return expired('That code was tried too many times.');
+    return c.json({ error: `That code isn't right. ${left} ${left === 1 ? 'try' : 'tries'} left.` }, 400);
+  }
+  await db.prepare('UPDATE login_codes SET used_at = ? WHERE id = ?').bind(nowIso(), id).run();
+  deleteCookie(c, CODE_COOKIE, { path: '/auth' });
+  const user = await admit(c, row.email, '', null);
+  if (!user) return c.json({ error: `${row.email} doesn't have access. Ask an admin to add this address (or enable it again).` }, 403);
+  return c.json({ next: safeNext(typeof b.next === 'string' ? b.next : null) });
 });
 
 /** Local development only: sign in as any existing user without Google. */
@@ -310,14 +521,22 @@ authRoutes.post('/logout', async (c) => {
   return c.body(null, 204);
 });
 
+/** Signs the person in and goes on to `next`, or back to the sign-in page saying which address has no access. */
 async function signIn(c: Ctx, rawEmail: string, name: string, picture: string | null, next = '/') {
+  if (await admit(c, rawEmail, name, picture)) return c.redirect(next);
+  // Shown on the sign-in page so people know which address was refused.
+  setCookie(c, 'tv_denied', rawEmail.trim().toLowerCase(), { secure: cookieBase(c).secure, sameSite: 'Lax', path: '/', maxAge: 300 });
+  return c.redirect('/login?error=no_access');
+}
+
+/** Lets in an address that has access: brings their name and picture up to date and starts a session. Null if it hasn't. */
+async function admit(c: Ctx, rawEmail: string, name: string, picture: string | null): Promise<UserRow | null> {
   const db = c.env.DB;
   const email = rawEmail.trim().toLowerCase();
   const now = nowIso();
-  const bootstrapAdmins = (c.env.ADMIN_EMAILS || '').toLowerCase().split(/[\s,;]+/).filter(Boolean);
   let user = await db.prepare('SELECT * FROM users WHERE email = ?').bind(email).first<UserRow>();
 
-  if ((!user || user.status === 'disabled') && bootstrapAdmins.includes(email)) {
+  if ((!user || user.status === 'disabled') && bootstrapAdmins(c.env).includes(email)) {
     if (user) {
       await db.batch([
         db.prepare("UPDATE users SET role = 'admin', status = 'active', disabled_at = NULL, disabled_by = NULL, name = ?, avatar_url = ?, last_seen_at = ? WHERE id = ?")
@@ -335,8 +554,9 @@ async function signIn(c: Ctx, rawEmail: string, name: string, picture: string | 
     user = await db.prepare('SELECT * FROM users WHERE email = ?').bind(email).first<UserRow>();
   }
 
-  if (!user) {
-    // Brand-new install: the very first person to sign in becomes the admin.
+  if (!user && !tokenKeyOk(c.env)) {
+    // Brand-new install without a setup key: the very first person to sign in becomes the admin. (With TOKEN_KEY, the
+    // first admin is whoever sets the instance up with it: POST /auth/setup.)
     // One conditional INSERT, so if two people race, only one can win.
     await db
       .prepare(
@@ -350,11 +570,7 @@ async function signIn(c: Ctx, rawEmail: string, name: string, picture: string | 
     if (user) await bumpDirectory(db).run();
   }
 
-  if (!user || user.status === 'disabled') {
-    // Shown on the sign-in page so people know which address was refused.
-    setCookie(c, 'tv_denied', email, { secure: cookieBase(c).secure, sameSite: 'Lax', path: '/', maxAge: 300 });
-    return c.redirect('/login?error=no_access');
-  }
+  if (!user || user.status === 'disabled') return null;
 
   const changed = user.status !== 'active' || (name && name !== user.name) || (picture && picture !== user.avatar_url);
   const stmts = [
@@ -363,7 +579,7 @@ async function signIn(c: Ctx, rawEmail: string, name: string, picture: string | 
   ];
   if (changed) stmts.push(bumpDirectory(db));
   await createSession(c, user.id, stmts);
-  return c.redirect(next);
+  return user;
 }
 
 async function createSession(c: Ctx, userId: string, extra: D1PreparedStatement[] = []) {

@@ -1,8 +1,18 @@
 # Copy to .dev.vars for local development (never commit .dev.vars).
 
+# Optional: the setup key and the key that encrypts Settings → Sign-in (32+ characters; make one with
+# `openssl rand -base64 32`). With it, the sign-in settings below can be changed in the app instead, and an empty
+# database shows the "set up this instance" page. Without it, everything here is used as it is.
+TOKEN_KEY=
+
 # Google OAuth client (Web application). Authorized redirect URI: http://localhost:5173/auth/callback
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
+
+# Optional: sign-in with codes sent by email, through Resend (or set it up in Settings → Sign-in, with a TOKEN_KEY).
+# EMAIL_CODES=on
+# RESEND_API_KEY=
+# MAIL_FROM=tasks@yourdomain.com
 
 # Optional: "Continue with email" sign-in through WorkOS AuthKit (use the Staging environment's values).
 # Redirect URI to add in WorkOS: http://localhost:5173/auth/workos/callback
@@ -30,8 +40,8 @@ MS_FILES=
 VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
 
-# Optional, comma-separated: addresses always let in as admins. (On an empty database the first person to sign in
-# becomes the admin anyway.)
+# Optional, comma-separated: addresses always let in as admins. (Without a TOKEN_KEY, the first person to sign in to an
+# empty database becomes the admin anyway.)
 ADMIN_EMAILS=
 
 # Local only: enables /auth/dev-login?email=... so you can sign in as seeded users without Google.

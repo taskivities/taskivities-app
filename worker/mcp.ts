@@ -20,6 +20,7 @@ import { setFollowing } from './followers';
 import { setBlocker } from './dependencies';
 import { blockedUntil, holdingUp } from '../shared/deps';
 import { createProject, invitePeople, setProjectArchived, updateProject } from './admin';
+import { withConfig } from './signin-config';
 
 const PRIORITY_NAMES = ['urgent', 'high', 'normal', 'low'] as const;
 type PriorityName = (typeof PRIORITY_NAMES)[number];
@@ -868,7 +869,8 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           const role = args.role ?? 'member';
           const projects = role === 'admin' ? [] : (args.projects ?? []).map((n) => findProject(dir, n).id);
           const origin = this.props?.origin ?? '';
-          const r = await invitePeople(this.env, v, origin, { emails: args.emails, role, projects });
+          // With the sign-in settings saved in the app: invite emails go out through them (worker/signin-config.ts).
+          const r = await invitePeople(await withConfig(this.env), v, origin, { emails: args.emails, role, projects });
           const sent = new Set(r.email.sent);
           return {
             added: r.added.map((e) => ({ email: e, invite_email: sent.has(e) ? 'sent' : 'not sent' })),

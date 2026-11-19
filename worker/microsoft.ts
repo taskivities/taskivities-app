@@ -8,7 +8,7 @@ const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
 /** The configured tenant, or null unless it names exactly one organization ("common" and friends have no dot, so they fail DOMAIN). */
-export function msTenant(env: Env): string | null {
+export function msTenant(env: Pick<Env, 'MS_TENANT_ID'>): string | null {
   const t = (env.MS_TENANT_ID ?? '').trim().toLowerCase();
   return (GUID.test(t) && t !== MS_CONSUMER_TENANT) || DOMAIN.test(t) ? t : null;
 }

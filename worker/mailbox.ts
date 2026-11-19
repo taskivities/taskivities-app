@@ -5,7 +5,8 @@
 // to *send* mail as them (never read it), plus offline access for a refresh token. Connecting reuses the instance's
 // own sign-in app and callback (worker/auth.ts), so there's no extra redirect URI to register, and it has to be the
 // same account they sign in with. The refresh token is kept encrypted in `mailboxes` (migration 0018), one row per
-// admin, so connecting one provider replaces the other.
+// admin, so connecting one provider replaces the other. It's sealed with the instance's data key (worker/secrets.ts);
+// connections made before there was one (sealed with TOKEN_KEY or the client secret) are still read, and re-sealed.
 //
 // Everything fails soft: no connection, a withdrawn permission, an expired or unreadable token, or a send error all
 // come back as a status (and a dead connection is dropped). The person is still added; the admin gets the link.
@@ -13,6 +14,7 @@ import { type Env, nowIso } from './lib';
 import { type InviteInfo, inviteRaw, inviteText } from './invite-mail';
 import { msBase, msOn } from './microsoft';
 import { openToken, sealToken } from './token-crypto';
+import { open, seal } from './secrets';
 import type { MailboxVia } from '../shared/types';
 
 export type SendStatus = 'sent' | 'not_connected' | 'failed';
@@ -29,8 +31,8 @@ interface Provider {
   name: string;
   /** Usable here: that provider's sign-in is set up. */
   on(env: Env): boolean;
-  /** Encryption: key material (TOKEN_KEY, else the client secret) and a per-provider label. */
-  material(env: Env): string | undefined;
+  /** Encryption before the data key (and without a TOKEN_KEY): key material, newest first, and a per-provider label. */
+  legacy(env: Env): string[];
   info: string;
   /** Asked for when connecting (send only). */
   scope: string;
@@ -53,7 +55,7 @@ const PROVIDERS: Record<MailboxVia, Provider> = {
   gmail: {
     name: 'Gmail',
     on: googleOn,
-    material: (env) => env.TOKEN_KEY || env.GOOGLE_CLIENT_SECRET,
+    legacy: (env) => [env.TOKEN_KEY, env.GOOGLE_CLIENT_SECRET].filter((m): m is string => !!m),
     info: 'google-refresh-token',
     scope: `openid email ${GMAIL_SEND}`,
     canSend: (scope) => scope.split(' ').includes(GMAIL_SEND),
@@ -73,7 +75,7 @@ const PROVIDERS: Record<MailboxVia, Provider> = {
   outlook: {
     name: 'Outlook',
     on: msOn,
-    material: (env) => env.TOKEN_KEY || env.MS_CLIENT_SECRET,
+    legacy: (env) => [env.TOKEN_KEY, env.MS_CLIENT_SECRET].filter((m): m is string => !!m),
     info: 'microsoft-refresh-token',
     // User.Read checks the mailbox is the admin's own (Graph /me). Never Mail.Read.
     scope: 'openid email offline_access User.Read Mail.Send',
@@ -104,6 +106,26 @@ const getRow = (db: D1Database, userId: string) =>
   db.prepare('SELECT user_id, via, email, refresh_token, scope FROM mailboxes WHERE user_id = ?').bind(userId).first<Row>();
 const forget = (db: D1Database, userId: string) => db.prepare('DELETE FROM mailboxes WHERE user_id = ?').bind(userId).run();
 
+/** Sealed with the data key; the old way only while the instance has no usable TOKEN_KEY. */
+const sealRefresh = async (env: Env, p: Provider, plain: string) => (await seal(env, p.info, plain)) ?? sealToken(p.legacy(env)[0], p.info, plain);
+
+/** The stored refresh token, or null. One sealed the old way is moved to the data key once it's read. */
+async function openRefresh(env: Env, p: Provider, row: Row): Promise<string | null> {
+  const plain = await open(env, p.info, row.refresh_token);
+  if (plain) return plain;
+  for (const material of p.legacy(env)) {
+    const old = await openToken(material, p.info, row.refresh_token);
+    if (!old) continue;
+    const again = await seal(env, p.info, old);
+    if (again) {
+      await env.DB.prepare('UPDATE mailboxes SET refresh_token = ? WHERE user_id = ? AND refresh_token = ?')
+        .bind(again, row.user_id, row.refresh_token).run().catch(() => undefined);
+    }
+    return old;
+  }
+  return null;
+}
+
 /** For the app: where this admin's invites are emailed from, or null. */
 export async function mailboxStatus(env: Env, userId: string): Promise<{ via: MailboxVia; email: string } | null> {
   const row = await getRow(env.DB, userId).catch(() => null);
@@ -118,14 +140,14 @@ export async function saveMailbox(env: Env, userId: string, via: MailboxVia, ema
   await env.DB.prepare(
     'INSERT INTO mailboxes (user_id, via, email, refresh_token, scope, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
       'ON CONFLICT (user_id) DO UPDATE SET via = excluded.via, email = excluded.email, refresh_token = excluded.refresh_token, scope = excluded.scope, updated_at = excluded.updated_at',
-  ).bind(userId, via, email, await sealToken(p.material(env), p.info, refreshToken), scope, now, now).run();
+  ).bind(userId, via, email, await sealRefresh(env, p, refreshToken), scope, now, now).run();
   if (old && old.via !== via) await revokeRow(env, old);
 }
 
 async function revokeRow(env: Env, row: Row) {
   const p = PROVIDERS[row.via];
   if (!p?.revoke) return;
-  const token = await openToken(p.material(env), p.info, row.refresh_token);
+  const token = await openRefresh(env, p, row);
   if (token) await p.revoke(token);
 }
 
@@ -145,7 +167,7 @@ async function accessToken(env: Env, userId: string): Promise<{ row: Row; token:
   if (!row) return { status: 'not_connected' };
   const p = PROVIDERS[row.via];
   if (!p?.on(env)) return { status: 'not_connected' };
-  const refresh = await openToken(p.material(env), p.info, row.refresh_token);
+  const refresh = await openRefresh(env, p, row);
   if (!refresh) {
     await forget(env.DB, userId);
     return { status: 'not_connected', reason: `Your ${p.name} connection needs to be set up again. ${AGAIN}` };

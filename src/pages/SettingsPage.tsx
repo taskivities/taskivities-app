@@ -6,6 +6,7 @@ import { hookStatus } from '../components/WebhookSheet';
 import { logoUrl } from '../brand';
 import { I, LogoMark, Wordmark } from '../components/ui';
 import { useStore } from '../store';
+import { SigninSettings } from '../components/SigninSettings';
 
 const MAX_KB = 256;
 
@@ -115,6 +116,7 @@ export function SettingsPage() {
       </section>
       <AppName />
       <AppIcon />
+      <SigninSettings />
       <Webhooks />
       <section className="sec">
         <div className="sec-h"><h2>Invite emails</h2><span className="cnt">{s.mailbox ? 'On' : 'Off'} · just for you</span></div>

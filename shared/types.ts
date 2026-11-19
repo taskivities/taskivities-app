@@ -343,3 +343,22 @@ export interface CloudPickers {
   google: { clientId: string; apiKey: string; appId: string } | null;
   microsoft: { clientId: string; tenant: string } | null;
 }
+
+/** Settings → Sign-in (admins; worker/signin-settings.ts). Each part of the page saves on its own. */
+export type SigninProvider = 'google' | 'microsoft' | 'workos' | 'email' | 'files';
+/** One saved setting: secrets only say they're set and end in `hint`; the rest show their value. */
+export interface SigninField { set: boolean; value?: string; hint?: string }
+export interface SigninSettings {
+  /**
+   * ok: saved in the app. no_key: no TOKEN_KEY, so the deployment's variables are used and can't be changed here.
+   * short_key: TOKEN_KEY is too short to use. key_changed: TOKEN_KEY changed and the saved settings can't be read.
+   */
+  status: 'ok' | 'no_key' | 'short_key' | 'key_changed';
+  fields: Record<string, SigninField>;
+  /** Which ways in are on. */
+  on: { google: boolean; microsoft: boolean; workos: boolean; code: boolean };
+  /** The From name used when none is set: the app's name. */
+  defaultFromName: string;
+  /** What to paste into Google, Microsoft and WorkOS for this address. */
+  redirects: { google: string; microsoft: string; workos: string; workosSignin: string; pickerOrigin: string; onedrive: string };
+}

@@ -9,6 +9,29 @@ section into the new version's; `git push --follow-tags` publishes it.
 
 ## Unreleased
 
+### Added
+
+- **Sign-in:** people can sign in with a 6-digit code sent to their email, with no Google or Microsoft account. An
+  admin turns it on under **Settings → Sign-in → Email codes** with a [Resend](https://resend.com) API key and a From
+  address on a domain verified there.
+- **Settings:** a new **Sign-in** section, where admins set up Google, Microsoft 365, WorkOS, email codes and the
+  Google Drive and OneDrive keys in the app instead of as Worker secrets. It shows the exact redirect URIs to paste,
+  and new Google, Microsoft or WorkOS settings are saved only after a test sign-in with them works, so a typo can't
+  lock anyone out.
+- **New instances:** `npm run tenant -- create` now writes a setup key (`TOKEN_KEY`) into `tenants/<instance>.env`,
+  and that's the only secret a new instance needs. After the first deploy, open the app and enter your email and that
+  key: you become the admin, and set up everything else in the app.
+
+### Changed
+
+- **Updating:** your next `npm run deploy` adds a `TOKEN_KEY` line to `tenants/<instance>.env` and sends it to the
+  Worker. Keep that file private and never change the key: it encrypts the sign-in settings. Existing sign-in keeps
+  working with nothing to re-enter: the secrets set before (`GOOGLE_CLIENT_ID`, `MS_CLIENT_SECRET`, …) are copied
+  into **Settings → Sign-in** once, and are changed there from then on. Connected Gmail and Outlook invite mailboxes
+  keep working too.
+- **Sign-in:** on an instance with a setup key, the first person to sign in no longer becomes the admin by default;
+  the admin is whoever sets the instance up with the key.
+
 ## v0.13.0 (2026-11-09)
 
 ### Added

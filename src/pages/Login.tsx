@@ -33,8 +33,24 @@ const MESSAGES: Record<string, string> = {
   unverified: "That account's email address isn't verified.",
 };
 
-/** Which sign-in methods this instance has set up (WorkOS is optional), and the team's name and wordmark. */
-type Methods = { google: boolean; microsoft: boolean; workos: boolean; name?: string; wordmark?: string | null };
+/**
+ * Which sign-in methods this instance has set up, whether it still needs setting up (nobody in it yet), and the
+ * team's name and wordmark.
+ */
+type Methods = { google: boolean; microsoft: boolean; workos: boolean; code?: boolean; setup?: boolean; name?: string; wordmark?: string | null };
+
+/** POSTs to our own sign-in endpoints; the answer's `error`, if any, is thrown as a message. */
+async function post<T>(url: string, body: unknown): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-taskivities': '1' }, body: JSON.stringify(body) });
+  } catch {
+    throw new Error("Can't reach the server. Check your connection.");
+  }
+  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) throw Object.assign(new Error(data.error || 'Something went wrong. Please try again.'), { data });
+  return data;
+}
 
 export function Login() {
   const params = new URLSearchParams(location.search);
@@ -73,10 +89,18 @@ export function Login() {
             </div>
           )}
           {error && MESSAGES[error] && <div className="si-msg" role="alert">{MESSAGES[error]}</div>}
-          {methods?.google && <a className="gbtn" href={`/auth/login${q}`}>{GLOGO} Continue with Google</a>}
-          {methods?.microsoft && <a className="gbtn" href={`/auth/microsoft${q}`}>{MSLOGO} Continue with Microsoft</a>}
-          {methods?.workos && <a className="gbtn" data-act="signin-email" href={`/auth/workos${q}`}>{I.mail(18)} Continue with email</a>}
-          <div className="si-foot">Only people an admin has added can sign in.</div>
+          {methods?.setup ? <SetupForm name={methods.name || 'Taskivities'} next={next} /> : (
+            <>
+              {methods?.google && <a className="gbtn" href={`/auth/login${q}`}>{GLOGO} Continue with Google</a>}
+              {methods?.microsoft && <a className="gbtn" href={`/auth/microsoft${q}`}>{MSLOGO} Continue with Microsoft</a>}
+              {methods?.workos && <a className="gbtn" data-act="signin-email" href={`/auth/workos${q}`}>{I.mail(18)} Continue with email</a>}
+              {methods?.code && <CodeForm next={next} first={!methods.google && !methods.microsoft && !methods.workos} />}
+              {methods && !methods.google && !methods.microsoft && !methods.workos && !methods.code && (
+                <div className="si-msg" role="status">No way to sign in is set up here yet. Ask whoever runs this instance.</div>
+              )}
+              <div className="si-foot">Only people an admin has added can sign in.</div>
+            </>
+          )}
           {import.meta.env.DEV && (
             <div className="si-dev">
               <div className="lbl">Local development sign-in</div>
@@ -89,5 +113,91 @@ export function Login() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** A brand-new instance: the first person sets it up with the instance's setup key, and becomes its admin. */
+function SetupForm({ name, next }: { name: string; next: string | null }) {
+  const [email, setEmail] = useState('');
+  const [who, setWho] = useState('');
+  const [key, setKey] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true); setErr(null);
+    try {
+      const r = await post<{ next: string }>('/auth/setup', { email, name: who, key, next });
+      location.href = r.next;
+    } catch (x) {
+      setErr((x as Error).message);
+      setBusy(false);
+    }
+  };
+  return (
+    <form className="si-form" onSubmit={(e) => void submit(e)} data-act="setup-form">
+      <div className="si-note">Set up {name}: you'll be its first admin, then you can choose how everyone else signs in.</div>
+      <label>Your email<input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} data-act="setup-email" /></label>
+      <label>Your name<input autoComplete="name" value={who} onChange={(e) => setWho(e.target.value)} placeholder="Optional" data-act="setup-name" /></label>
+      <label>Setup key<input type="password" autoComplete="off" required value={key} onChange={(e) => setKey(e.target.value)} data-act="setup-key" /></label>
+      <div className="si-hint">The <b>TOKEN_KEY</b> line in this instance's <code>tenants/&lt;instance&gt;.env</code> file.</div>
+      {err && <div className="si-msg" role="alert">{err}</div>}
+      <button className="gbtn primary" type="submit" disabled={busy} data-act="setup-submit">{busy ? 'Setting up…' : 'Set up and sign in'}</button>
+    </form>
+  );
+}
+
+/** Sign in with a code sent by email: the address, then the code. */
+function CodeForm({ next, first }: { next: string | null; first: boolean }) {
+  const [open, setOpen] = useState(first);
+  const [email, setEmail] = useState('');
+  const [sent, setSent] = useState(false);
+  const [code, setCode] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const ask = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    setBusy(true); setErr(null);
+    try {
+      await post('/auth/code', { email });
+      setSent(true); setCode('');
+    } catch (x) {
+      setErr((x as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const verify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true); setErr(null);
+    try {
+      const r = await post<{ next: string }>('/auth/code/verify', { code, next });
+      location.href = r.next;
+    } catch (x) {
+      const expired = (x as { data?: { expired?: boolean } }).data?.expired;
+      setErr((x as Error).message);
+      if (expired) setCode('');
+      setBusy(false);
+    }
+  };
+  if (!open) return <button className="gbtn" type="button" data-act="signin-code" onClick={() => setOpen(true)}>{I.mail(18)} Sign in with an email code</button>;
+  return sent ? (
+    <form className="si-form" onSubmit={(e) => void verify(e)} data-act="code-form">
+      <div className="si-note">If <b>{email}</b> has access, a 6-digit code is on its way. It works for 10 minutes, in this browser.</div>
+      <label>Code<input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9 ]*" maxLength={7} required autoFocus value={code}
+        onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ''))} data-act="code-input" /></label>
+      {err && <div className="si-msg" role="alert">{err}</div>}
+      <button className="gbtn primary" type="submit" disabled={busy || code.length !== 6} data-act="code-submit">{busy ? 'Signing in…' : 'Sign in'}</button>
+      <div className="si-links">
+        <button type="button" className="link" onClick={() => void ask()} disabled={busy}>Send a new code</button>
+        <button type="button" className="link" onClick={() => { setSent(false); setErr(null); }}>Use another address</button>
+      </div>
+    </form>
+  ) : (
+    <form className="si-form" onSubmit={(e) => void ask(e)} data-act="code-ask">
+      <label>Email<input type="email" autoComplete="email" required autoFocus={!first} value={email} onChange={(e) => setEmail(e.target.value)} data-act="code-email" /></label>
+      {err && <div className="si-msg" role="alert">{err}</div>}
+      <button className="gbtn primary" type="submit" disabled={busy} data-act="code-send">{I.mail(18)} {busy ? 'Sending…' : 'Email me a sign-in code'}</button>
+    </form>
   );
 }

@@ -1,7 +1,7 @@
-// Encrypting stored refresh tokens (invite mailboxes, worker/mailbox.ts) with AES-GCM. The key is derived (HKDF) from
-// TOKEN_KEY when set, otherwise from the provider's own client secret, so there's nothing extra to set up. `info`
-// keeps each provider's key separate. Changing the material just makes stored tokens unreadable: admins connect again.
-// (Gmail's derivation is the one the old Gmail-only code used, unchanged, so existing connections keep working.)
+// AES-GCM with a key derived (HKDF) from some key material plus an `info` label that keeps each use's key apart.
+// Used for the data key, wrapped with TOKEN_KEY, and everything sealed with the data key (worker/secrets.ts). Invite
+// mailbox tokens saved before the data key existed were sealed straight from TOKEN_KEY or the provider's client secret;
+// worker/mailbox.ts still reads those. (Gmail's derivation is the one the old Gmail-only code used, unchanged.)
 
 const toB64 = (b: Uint8Array) => btoa(String.fromCharCode(...b));
 const fromB64 = (s: string) => Uint8Array.from(atob(s), (ch) => ch.charCodeAt(0));
