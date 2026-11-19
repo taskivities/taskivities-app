@@ -9,6 +9,8 @@ section into the new version's; `git push --follow-tags` publishes it.
 
 ## Unreleased
 
+## v0.14.0 (2026-11-19)
+
 ### Added
 
 - **Sign-in:** people can sign in with a 6-digit code sent to their email, with no Google or Microsoft account. An
