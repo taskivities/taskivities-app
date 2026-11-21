@@ -1,0 +1,29 @@
+{
+  "id": "taskivities",
+  "name": "Taskivities",
+  "home": "/",
+  "assets": {
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*", "/logo.svg", "/wordmark.svg", "/manifest.webmanifest", "/icons/*", "/hooks/*", "/upload/*", "/auth/*",
+      "/mcp", "/mcp/*", "/authorize", "/token", "/register", "/.well-known/*", "/v1/*", "/relay/*",
+      "/_health", "/_admin/*", "/_platform/*"
+    ]
+  },
+  "resources": {
+    "d1": { "binding": "DB" },
+    "r2": [{ "binding": "FILES" }],
+    "kv": [{ "binding": "OAUTH_KV" }],
+    "durable_objects": [{ "binding": "MCP_OBJECT", "class": "TaskivitiesMCP" }]
+  },
+  "secrets": [
+    { "name": "TOKEN_KEY", "kind": "random" },
+    { "name": "VAPID", "kind": "vapid" }
+  ],
+  "vars": { "TEAM_TZ": "America/New_York", "UPDATE_REPO": "off" },
+  "schedules": [{ "every": "30m" }],
+  "egress": "any",
+  "payments": "none",
+  "release": { "build": "npm run build", "config": "dist/taskivities_local/wrangler.json", "assets_dir": "dist/client" }
+}

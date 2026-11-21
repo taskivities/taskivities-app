@@ -6,6 +6,7 @@
 import { Hono } from 'hono';
 import { ATTACH_MAX_BYTES, ATTACH_PER_TASK_MAX, type Task } from '../shared/types';
 import { type AppEnv, type Env, type Viewer, HttpError, CURRENT_VERSION, bad, bumpVersion, eventStmt, forbidden, loadViewer, mapTask, notFound, nowIso, randomToken, sha256hex, uid } from './lib';
+import { STORAGE_FULL, storageFull } from './platform';
 import { loadEditableTask, loadTask, loadVisibleTask } from './tasks';
 
 interface AttachmentRow {
@@ -59,6 +60,8 @@ export async function addAttachment(env: Env, v: Viewer, taskId: string, body: R
   const db = env.DB;
   if (!body || !Number.isFinite(size) || size <= 0) throw bad('That file is empty.');
   if (size > ATTACH_MAX_BYTES) throw new HttpError(400, `Files can be at most ${ATTACH_MAX_BYTES / 1024 / 1024} MB.`);
+  // On the SleekSite platform: over the plan's storage allowance, new files wait until there's room again.
+  if (await storageFull(env)) throw new HttpError(409, STORAGE_FULL);
   const t = await taskWithRoom(db, v, taskId);
 
   const id = uid();

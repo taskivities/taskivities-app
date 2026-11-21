@@ -2,7 +2,8 @@ import { OAuthProvider } from '@cloudflare/workers-oauth-provider';
 import { Hono } from 'hono';
 import { admin } from './admin';
 import { api } from './api';
-import { authRoutes, requireSession, sameOrigin } from './auth';
+import { authRoutes, requireSession, sameOrigin, ssoSignIn } from './auth';
+import { platformRoutes } from './platform';
 import { type AppEnv, type Env, HttpError } from './lib';
 import { TaskivitiesMCP } from './mcp';
 import { oauthRoutes } from './oauth';
@@ -31,6 +32,14 @@ app.onError((err, c) => {
 });
 
 // The logo (header, sign-in page, browser tab icon). Public, so the sign-in page can show it.
+// The SleekSite platform (worker/platform.ts): health check, sign-in from its console, and its calls into this instance.
+app.get('/_health', async (c) => {
+  const ok = await c.env.DB.prepare('SELECT 1 AS one').first().then(() => true, () => false);
+  return c.json({ ok }, ok ? 200 : 503);
+});
+app.get('/_admin/auth/sso', ssoSignIn);
+app.route('/_platform', platformRoutes);
+
 app.get('/logo.svg', serveLogo);
 // The team's wordmark, when one is uploaded (public too: the sign-in page shows it).
 app.get('/wordmark.svg', serveWordmark);

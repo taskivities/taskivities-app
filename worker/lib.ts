@@ -44,6 +44,13 @@ export interface Env {
   GOOGLE_APP_ID?: string;
   /** OneDrive / SharePoint files: "on" once the Entra app has a SPA redirect and file permissions (README). Needs MS_CLIENT_ID and MS_TENANT_ID. */
   MS_FILES?: string;
+  /** Set by the SleekSite platform when it runs this instance (worker/platform.ts); absent when self-hosted. */
+  WORKSPACE_ID?: string;
+  CONTROLLER_URL?: string;
+  CONTROLLER_KEY?: string;
+  PLATFORM_DOMAIN?: string;
+  WORKSPACE_SUBDOMAIN?: string;
+  APP_PRODUCT?: string;
   /** Attachments (R2). Missing on instances without a bucket: attachments are then off. */
   FILES?: R2Bucket;
   DEV_LOGIN?: string;

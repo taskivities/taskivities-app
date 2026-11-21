@@ -12,6 +12,7 @@ import { EMAIL_RE } from '../shared/rules';
 import { loadSettings } from './settings';
 import { codeMail, codesOn, sendMail } from './mailer';
 import { tokenKeyOk } from './secrets';
+import { controllerFetch, controllerToken, ensurePerson, onPlatform } from './platform';
 import { type TestProvider, clearPending, loadPending, saveConfig } from './signin-config';
 import { mailboxProvider, saveMailbox } from './mailbox';
 import { GRAPH_ME, type GraphMe, emailOf, msBase as msBaseOf, msOn as msOnOf, msTenant as msTenantOf } from './microsoft';
@@ -220,7 +221,8 @@ const workosRedirect = (c: Ctx) => `${new URL(c.req.url).origin}/auth/workos/cal
 authRoutes.get('/methods', async (c) => {
   const st = await loadSettings(c.env.DB);
   if (c.env.MS_CLIENT_ID && !msTenant(c)) console.warn(MS_TENANT_HELP);
-  const setup = tokenKeyOk(c.env) && !(await hasUsers(c.env.DB));
+  // On the SleekSite platform the account's owners are added by the platform, so there's nothing to set up here.
+  const setup = !onPlatform(c.env) && tokenKeyOk(c.env) && !(await hasUsers(c.env.DB));
   return c.json({
     google: googleOn(c), microsoft: msOn(c), workos: workosOn(c), code: codesOn(c.env), setup,
     name: appName(st), wordmark: st.customWordmark ? st.wordmarkVersion : null,
@@ -406,6 +408,7 @@ async function testCallback(
 // ---------- setting up a new instance: the first admin, with the setup key ----------
 authRoutes.post('/setup', async (c) => {
   if (!fromOurPage(c)) return c.json({ error: 'Bad origin' }, 403);
+  if (onPlatform(c.env)) return c.json({ error: 'Sign in from the SleekSite console.' }, 409);
   if (!tokenKeyOk(c.env)) return c.json({ error: 'This instance has no setup key. Add TOKEN_KEY to its tenants/<instance>.env file and deploy again.' }, 409);
   const b = await c.req.json<{ email?: unknown; name?: unknown; key?: unknown; next?: unknown }>().catch(() => ({} as Record<string, unknown>));
   const email = typeof b.email === 'string' ? b.email.trim().toLowerCase() : '';
@@ -470,9 +473,12 @@ authRoutes.post('/code', async (c) => {
   if ((user && user.status !== 'disabled') || bootstrapAdmins(c.env).includes(email)) {
     const app = appName(st);
     // Sent after answering, so how long the answer takes doesn't say whether the address has access.
-    c.executionCtx.waitUntil(sendMail(c.env, codeMail(email, app, code, CODE_MINUTES), c.env.MAIL_FROM_NAME || app).then((r) => {
-      if (!r.ok) console.error(`Sign-in code not sent: ${r.error}`);
-    }));
+    // On the SleekSite platform the code goes out from the platform's mail domain (rate-limited there too).
+    c.executionCtx.waitUntil(onPlatform(c.env)
+      ? controllerFetch(c.env, '/api/tenant/mail/signin-code', { email, code, siteName: app }).catch((e) => console.error(`Sign-in code not sent: ${(e as Error).message}`))
+      : sendMail(c.env, codeMail(email, app, code, CODE_MINUTES), c.env.MAIL_FROM_NAME || app).then((r) => {
+        if (!r.ok) console.error(`Sign-in code not sent: ${r.error}`);
+      }));
   }
   return c.json({ ok: true });
 });
@@ -641,3 +647,21 @@ export const sameOrigin: MiddlewareHandler<AppEnv> = async (c, next) => {
   }
   await next();
 };
+
+// ---------- "Open" from the SleekSite console (worker/platform.ts) ----------
+
+/**
+ * GET /_admin/auth/sso?token=…&next=/path: the console sends an account's owner (or platform staff, for support) here
+ * with a 60-second token signed with this instance's key. Owners are admins here; staff come in as admins too, and
+ * it's recorded in the audit log.
+ */
+export async function ssoSignIn(c: Ctx) {
+  const claims = await controllerToken(c.env, c.req.query('token') || '', 'sso');
+  if (!claims?.sub || !EMAIL_RE.test(claims.sub)) return c.text('That sign-in link has expired. Open the app again from the SleekSite console.', 401);
+  const email = claims.sub.toLowerCase();
+  const user = await ensurePerson(c.env, email, (claims.name || '').slice(0, 80), !!(claims.owner || claims.staff));
+  if (!user) return c.text('Could not sign you in.', 500);
+  const extra = claims.staff && !claims.owner ? [auditStmt(c.env.DB, user.id, 'platform_staff_signed_in', user.id, { email })] : [];
+  await createSession(c, user.id, extra);
+  return c.redirect(safeNext(c.req.query('next')));
+}
