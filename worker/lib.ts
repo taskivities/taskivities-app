@@ -50,7 +50,7 @@ export interface Env {
   /** The way to the platform's API (https://sky/...), set by the controller; it knows which app is calling. */
   SKY?: Fetcher;
   PLATFORM_DOMAIN?: string;
-  WORKSPACE_SUBDOMAIN?: string;
+  APP_SUBDOMAIN?: string;
   APP_PRODUCT?: string;
   /** Attachments (R2). Missing on instances without a bucket: attachments are then off. */
   FILES?: R2Bucket;
