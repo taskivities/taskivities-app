@@ -475,7 +475,7 @@ authRoutes.post('/code', async (c) => {
     // Sent after answering, so how long the answer takes doesn't say whether the address has access.
     // On the SleekSite platform the code goes out from the platform's mail domain (rate-limited there too).
     c.executionCtx.waitUntil(onPlatform(c.env)
-      ? controllerFetch(c.env, '/api/tenant/mail/signin-code', { email, code, siteName: app }).catch((e) => console.error(`Sign-in code not sent: ${(e as Error).message}`))
+      ? controllerFetch(c.env, '/api/app/mail/signin-code', { email, code, siteName: app }).catch((e) => console.error(`Sign-in code not sent: ${(e as Error).message}`))
       : sendMail(c.env, codeMail(email, app, code, CODE_MINUTES), c.env.MAIL_FROM_NAME || app).then((r) => {
         if (!r.ok) console.error(`Sign-in code not sent: ${r.error}`);
       }));
@@ -658,9 +658,9 @@ const platformCallback = (c: Ctx) => `${new URL(c.req.url).origin}/auth/platform
  * already signed in there go straight through). It comes back to /auth/platform/callback with a one-time code.
  */
 authRoutes.get('/platform', async (c) => {
-  if (!onPlatform(c.env) || !c.env.CONTROLLER_URL) return c.redirect('/login');
+  if (!onPlatform(c.env) || !c.env.CONSOLE_URL) return c.redirect('/login');
   const { state } = await beginOAuth(c, PLATFORM_COOKIE, safeNext(c.req.query('next')));
-  const to = new URL('/auth', c.env.CONTROLLER_URL);
+  const to = new URL('/auth', c.env.CONSOLE_URL);
   to.search = new URLSearchParams({ app: c.env.APP_ID!, redirect: platformCallback(c), state }).toString();
   return c.redirect(to.toString());
 });
@@ -696,7 +696,7 @@ authRoutes.get('/platform/callback', async (c) => {
   const existing = await c.env.DB.prepare('SELECT status FROM users WHERE email = ?').bind(email).first<{ status: string }>();
   if (existing && existing.status !== 'disabled') return signIn(c, email, name, null, saved.next);
   // The platform counted this as a sign-in; we refused it, so keep this app off their "Your apps".
-  c.executionCtx.waitUntil(controllerFetch(c.env, '/api/tenant/signins/remove', { email }).catch((e) => console.error(`signins/remove failed: ${(e as Error).message}`)));
+  c.executionCtx.waitUntil(controllerFetch(c.env, '/api/app/signins/remove', { email }).catch((e) => console.error(`signins/remove failed: ${(e as Error).message}`)));
   setCookie(c, 'tv_denied', email, { secure: cookieBase(c).secure, sameSite: 'Lax', path: '/', maxAge: 300 });
   return c.redirect('/login?error=no_access');
 });

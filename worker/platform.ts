@@ -1,9 +1,9 @@
 // Running as an app on the SleekSky platform (cf-controller: docs/app-auth.md, docs/site/tenant-api.md,
 // docs/site/runtime.md, docs/site/manifest.md). The controller deploys one instance per customer and sets APP_ID,
-// CONTROLLER_URL (the console, for browser redirects) and the SKY service binding; without APP_ID and SKY nothing
+// CONSOLE_URL (the console, for browser redirects) and the SKY service binding; without APP_ID and SKY nothing
 // here applies and Taskivities behaves as a self-hosted install.
 //
-// Everything this app asks of the platform goes over SKY (https://sky/api/tenant/*). The binding tells the platform
+// Everything this app asks of the platform goes over SKY (https://sky/api/app/*). The binding tells the platform
 // which app is calling, so no key or token is sent:
 //   GET  init                  this app, its services, the allowance and storage state (cached per isolate for its ttl)
 //   POST mail/signin-code      email a sign-in code from the platform's mail domain
@@ -25,7 +25,7 @@ import { morningSummaries } from './push';
 type PlatformEnv = Pick<Env, 'APP_ID' | 'SKY'>;
 export const onPlatform = (env: PlatformEnv) => !!(env.APP_ID && env.SKY);
 
-/** A call to the platform over SKY (`path` like '/api/tenant/init' or '/auth/token'). Throws with the platform's message. */
+/** A call to the platform over SKY (`path` like '/api/app/init' or '/auth/token'). Throws with the platform's message. */
 export async function controllerFetch(env: PlatformEnv, path: string, body?: unknown): Promise<Record<string, unknown>> {
   if (!onPlatform(env)) throw new Error("This instance isn't on the SleekSky platform.");
   const r = await env.SKY!.fetch('https://sky' + path, {
@@ -55,7 +55,7 @@ let asking: Promise<void> | null = null;
 export async function platformInfo(env: PlatformEnv): Promise<PlatformInfo | null> {
   if (!onPlatform(env)) return null;
   if (!info || Date.now() - info.at > info.ttl * 1000) {
-    asking ??= controllerFetch(env, '/api/tenant/init')
+    asking ??= controllerFetch(env, '/api/app/init')
       .then((d) => { info = { at: Date.now(), ttl: Number(d.ttl) || 300, data: d as unknown as PlatformInfo }; })
       .catch((e) => {
         console.error(`Platform init failed: ${(e as Error).message}`);
