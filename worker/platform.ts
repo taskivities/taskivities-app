@@ -1,6 +1,6 @@
 // Running as an app on the SleekSky platform (cf-controller: docs/app-auth.md, docs/site/tenant-api.md,
-// docs/site/runtime.md, docs/site/manifest.md). The controller deploys one instance per customer and sets WORKSPACE_ID,
-// CONTROLLER_URL (the console, for browser redirects) and the SKY service binding; without WORKSPACE_ID and SKY nothing
+// docs/site/runtime.md, docs/site/manifest.md). The controller deploys one instance per customer and sets APP_ID,
+// CONTROLLER_URL (the console, for browser redirects) and the SKY service binding; without APP_ID and SKY nothing
 // here applies and Taskivities behaves as a self-hosted install.
 //
 // Everything this app asks of the platform goes over SKY (https://sky/api/tenant/*). The binding tells the platform
@@ -22,8 +22,8 @@ import { type Env, bumpDirectory } from './lib';
 import { USER_COLORS } from '../shared/types';
 import { morningSummaries } from './push';
 
-type PlatformEnv = Pick<Env, 'WORKSPACE_ID' | 'SKY'>;
-export const onPlatform = (env: PlatformEnv) => !!(env.WORKSPACE_ID && env.SKY);
+type PlatformEnv = Pick<Env, 'APP_ID' | 'SKY'>;
+export const onPlatform = (env: PlatformEnv) => !!(env.APP_ID && env.SKY);
 
 /** A call to the platform over SKY (`path` like '/api/tenant/init' or '/auth/token'). Throws with the platform's message. */
 export async function controllerFetch(env: PlatformEnv, path: string, body?: unknown): Promise<Record<string, unknown>> {

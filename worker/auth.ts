@@ -661,7 +661,7 @@ authRoutes.get('/platform', async (c) => {
   if (!onPlatform(c.env) || !c.env.CONTROLLER_URL) return c.redirect('/login');
   const { state } = await beginOAuth(c, PLATFORM_COOKIE, safeNext(c.req.query('next')));
   const to = new URL('/auth', c.env.CONTROLLER_URL);
-  to.search = new URLSearchParams({ app: c.env.WORKSPACE_ID!, redirect: platformCallback(c), state }).toString();
+  to.search = new URLSearchParams({ app: c.env.APP_ID!, redirect: platformCallback(c), state }).toString();
   return c.redirect(to.toString());
 });
 

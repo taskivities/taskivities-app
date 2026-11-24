@@ -45,7 +45,7 @@ export interface Env {
   /** OneDrive / SharePoint files: "on" once the Entra app has a SPA redirect and file permissions (README). Needs MS_CLIENT_ID and MS_TENANT_ID. */
   MS_FILES?: string;
   /** Set by the SleekSite platform when it runs this instance (worker/platform.ts); absent when self-hosted. */
-  WORKSPACE_ID?: string;
+  APP_ID?: string;
   CONTROLLER_URL?: string;
   /** The way to the platform's API (https://sky/...), set by the controller; it knows which app is calling. */
   SKY?: Fetcher;

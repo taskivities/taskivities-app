@@ -6,12 +6,12 @@ export interface Mail { to: string; subject: string; text: string; html: string 
 export type MailResult = { ok: true } | { ok: false; error: string };
 
 /** Just the sender settings: the Worker's environment, or values being tried before they're saved. */
-type MailEnv = Pick<Env, 'EMAIL_CODES' | 'RESEND_API_KEY' | 'MAIL_FROM' | 'MAIL_FROM_NAME'> & Partial<Pick<Env, 'WORKSPACE_ID' | 'SKY'>>;
+type MailEnv = Pick<Env, 'EMAIL_CODES' | 'RESEND_API_KEY' | 'MAIL_FROM' | 'MAIL_FROM_NAME'> & Partial<Pick<Env, 'APP_ID' | 'SKY'>>;
 
 export const mailOn = (env: MailEnv) => !!(env.RESEND_API_KEY && env.MAIL_FROM);
 /** Sign-in with an emailed code is offered: turned on, with a sender to send the codes. */
 // On the SleekSite platform, codes are always on: the platform sends them (worker/platform.ts).
-export const codesOn = (env: MailEnv) => !!(env.WORKSPACE_ID && env.SKY) || (env.EMAIL_CODES === 'on' && mailOn(env));
+export const codesOn = (env: MailEnv) => !!(env.APP_ID && env.SKY) || (env.EMAIL_CODES === 'on' && mailOn(env));
 
 const oneLine = (s: string) => s.replace(/[\r\n"<>]+/g, ' ').trim();
 
