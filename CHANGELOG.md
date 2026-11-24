@@ -9,6 +9,21 @@ section into the new version's; `git push --follow-tags` publishes it.
 
 ## Unreleased
 
+### Added
+
+- **AI assistants:** an assistant connected over MCP is told which instance it's using (the team's name and the
+  app's address), and `list_projects` and `list_tasks` say so too. If you've connected several Taskivities instances
+  to the same assistant, it can tell them apart and says which one it used.
+
+### Changed
+
+- **SleekSky platform:** instances run by the platform now talk to it over its `SKY` binding instead of signed
+  tokens (`CONTROLLER_KEY` is gone). Account owners sign in with a new **Continue with SleekSite** button
+  (`/auth/platform`), which replaces the console's one-time `/_admin/auth/sso` links; other people sign in through it
+  only if they're already users here. Storage limits come from the platform's `init` call, and the platform calls only
+  `/_platform/tick` (every 30 minutes); `/_platform/owners` and `/_platform/quota` are removed. Self-hosted instances
+  are unchanged.
+
 ## v0.14.0 (2026-11-19)
 
 ### Added

@@ -21,6 +21,8 @@ import { setBlocker } from './dependencies';
 import { blockedUntil, holdingUp } from '../shared/deps';
 import { createProject, invitePeople, setProjectArchived, updateProject } from './admin';
 import { withConfig } from './signin-config';
+import { loadSettings } from './settings';
+import { appName } from '../shared/types';
 
 const PRIORITY_NAMES = ['urgent', 'high', 'normal', 'low'] as const;
 type PriorityName = (typeof PRIORITY_NAMES)[number];
@@ -190,12 +192,27 @@ Planning a project (when asked to plan, schedule or break down a project, or lay
 5. Don't make every task High, and don't make planned steps Urgent: a plan where everything is a priority shows nothing.
 Due dates can't be in the past. When you're unsure which project or person a task belongs to, check list_projects or ask.`;
 
+/** Which instance this is, as assistants are told: the team's name and the app's address. */
+interface Instance { name: string; address?: string }
+
+/**
+ * Put before INSTRUCTIONS. Someone with several instances connects each as its own connector, and every one
+ * offers the same tools, so the assistant needs to know which one it is talking to (docs/multi-instance.md).
+ */
+const instanceIntro = (i: Instance) =>
+  `This connector is the Taskivities instance "${i.name}"${i.address ? ` at ${i.address}` : ''}. ` +
+  `It only sees this instance's projects, people and tasks. The person may also have other Taskivities instances connected as separate connectors with the same tools: ` +
+  `each has its own projects and people, and tasks can't be moved or linked between instances. ` +
+  `When a request could belong to more than one, check list_projects on each (it names the instance) or ask, and say which instance you used.\n\n`;
+
 const PRIORITY_HELP =
   'urgent: drop everything, never planned work · high: a step in a project\'s plan (only High tasks show on its Gantt chart; give it duration_days and dependencies) · ' +
   'normal: everyday work, the default · low: when there is time.';
 
 export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
+  // Replaced in init() with one whose instructions name this instance; McpAgent reads `server` only after init().
   server = new McpServer({ name: 'Taskivities', version: '0.1.0' }, { instructions: INSTRUCTIONS });
+  private instance: Instance = { name: 'Taskivities' };
 
   /** "via …" in task history. */
   private get via() {
@@ -222,7 +239,24 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
     }
   }
 
+  /** The team's name now (it can change while connected) and the address the assistant connected to. */
+  private async loadInstance(): Promise<Instance> {
+    const name = appName(await loadSettings(this.env.DB));
+    let address: string | undefined;
+    try { address = this.props?.origin ? new URL(this.props.origin).host : undefined; } catch { /* old grant without a valid origin */ }
+    return { name, ...(address ? { address } : {}) };
+  }
+
   async init() {
+    try {
+      this.instance = await this.loadInstance();
+    } catch {
+      // Keep the default name; the tools still work.
+    }
+    this.server = new McpServer(
+      { name: 'Taskivities', title: this.instance.name === 'Taskivities' ? 'Taskivities' : `Taskivities: ${this.instance.name}`, version: '0.1.0' },
+      { instructions: instanceIntro(this.instance) + INSTRUCTIONS },
+    );
     let t0 = '';
     let zone = '';
     // Project descriptions say what belongs where; folding them into create_task lets the assistant pick
@@ -247,12 +281,13 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
         description:
           'Projects you can see, with their descriptions (what belongs in each project and how tasks are named), colors, ' +
           'and the people who can be assigned tasks there. Read the descriptions to decide which project a task belongs in. ' +
-          "Also returns today's date and your time zone (all dates are in your time zone).",
+          "Also returns today's date, your time zone (all dates are in your time zone) and which Taskivities instance this is.",
         inputSchema: {},
         annotations: { readOnlyHint: true },
       },
       () =>
         this.run(async (v, dir, today) => ({
+          instance: await this.loadInstance(),
           today,
           time_zone: v.tz,
           you: { name: dir.users.get(v.id)?.name, email: v.email, role: v.role },
@@ -309,6 +344,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
             .filter((t) => { const d = shownOn(t, t0); return d >= from && d <= to; })
             .sort((a, b) => shownOn(a, t0).localeCompare(shownOn(b, t0)) || a.priority - b.priority || a.dueDate.localeCompare(b.dueDate));
           return {
+            instance: this.instance.name,
             today: t0, from, to,
             count: tasks.length,
             ...(tasks.length > MAX_RESULTS ? { truncated: true, note: `Showing the first ${MAX_RESULTS}; narrow the range or filters.` } : {}),

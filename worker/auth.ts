@@ -12,7 +12,7 @@ import { EMAIL_RE } from '../shared/rules';
 import { loadSettings } from './settings';
 import { codeMail, codesOn, sendMail } from './mailer';
 import { tokenKeyOk } from './secrets';
-import { controllerFetch, controllerToken, ensurePerson, onPlatform } from './platform';
+import { controllerFetch, ensurePerson, onPlatform } from './platform';
 import { type TestProvider, clearPending, loadPending, saveConfig } from './signin-config';
 import { mailboxProvider, saveMailbox } from './mailbox';
 import { GRAPH_ME, type GraphMe, emailOf, msBase as msBaseOf, msOn as msOnOf, msTenant as msTenantOf } from './microsoft';
@@ -224,7 +224,7 @@ authRoutes.get('/methods', async (c) => {
   // On the SleekSite platform the account's owners are added by the platform, so there's nothing to set up here.
   const setup = !onPlatform(c.env) && tokenKeyOk(c.env) && !(await hasUsers(c.env.DB));
   return c.json({
-    google: googleOn(c), microsoft: msOn(c), workos: workosOn(c), code: codesOn(c.env), setup,
+    google: googleOn(c), microsoft: msOn(c), workos: workosOn(c), code: codesOn(c.env), setup, platform: onPlatform(c.env),
     name: appName(st), wordmark: st.customWordmark ? st.wordmarkVersion : null,
   });
 });
@@ -408,7 +408,7 @@ async function testCallback(
 // ---------- setting up a new instance: the first admin, with the setup key ----------
 authRoutes.post('/setup', async (c) => {
   if (!fromOurPage(c)) return c.json({ error: 'Bad origin' }, 403);
-  if (onPlatform(c.env)) return c.json({ error: 'Sign in from the SleekSite console.' }, 409);
+  if (onPlatform(c.env)) return c.json({ error: 'This app is set up by SleekSite. Sign in with SleekSite instead.' }, 409);
   if (!tokenKeyOk(c.env)) return c.json({ error: 'This instance has no setup key. Add TOKEN_KEY to its tenants/<instance>.env file and deploy again.' }, 409);
   const b = await c.req.json<{ email?: unknown; name?: unknown; key?: unknown; next?: unknown }>().catch(() => ({} as Record<string, unknown>));
   const email = typeof b.email === 'string' ? b.email.trim().toLowerCase() : '';
@@ -648,20 +648,55 @@ export const sameOrigin: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();
 };
 
-// ---------- "Open" from the SleekSite console (worker/platform.ts) ----------
+// ---------- Sign-in through the SleekSky platform (worker/platform.ts, cf-controller docs/app-auth.md) ----------
+
+const PLATFORM_COOKIE = 'tv_platform';
+const platformCallback = (c: Ctx) => `${new URL(c.req.url).origin}/auth/platform/callback`;
 
 /**
- * GET /_admin/auth/sso?token=…&next=/path: the console sends an account's owner (or platform staff, for support) here
- * with a 60-second token signed with this instance's key. Owners are admins here; staff come in as admins too, and
- * it's recorded in the audit log.
+ * GET /auth/platform?next=/path: off to the console's /auth (the console's "Open" links here too, so account owners
+ * already signed in there go straight through). It comes back to /auth/platform/callback with a one-time code.
  */
-export async function ssoSignIn(c: Ctx) {
-  const claims = await controllerToken(c.env, c.req.query('token') || '', 'sso');
-  if (!claims?.sub || !EMAIL_RE.test(claims.sub)) return c.text('That sign-in link has expired. Open the app again from the SleekSite console.', 401);
-  const email = claims.sub.toLowerCase();
-  const user = await ensurePerson(c.env, email, (claims.name || '').slice(0, 80), !!(claims.owner || claims.staff));
-  if (!user) return c.text('Could not sign you in.', 500);
-  const extra = claims.staff && !claims.owner ? [auditStmt(c.env.DB, user.id, 'platform_staff_signed_in', user.id, { email })] : [];
-  await createSession(c, user.id, extra);
-  return c.redirect(safeNext(c.req.query('next')));
-}
+authRoutes.get('/platform', async (c) => {
+  if (!onPlatform(c.env) || !c.env.CONTROLLER_URL) return c.redirect('/login');
+  const { state } = await beginOAuth(c, PLATFORM_COOKIE, safeNext(c.req.query('next')));
+  const to = new URL('/auth', c.env.CONTROLLER_URL);
+  to.search = new URLSearchParams({ app: c.env.WORKSPACE_ID!, redirect: platformCallback(c), state }).toString();
+  return c.redirect(to.toString());
+});
+
+/**
+ * The platform swaps the code for who signed in. Account owners are admins here (added if they're new); platform staff
+ * come in as admins too, for support, and it's recorded in the audit log. Anyone else gets in only if they're already
+ * a user here (not disabled); otherwise they're refused and the platform is told, so the app leaves their "Your apps".
+ */
+authRoutes.get('/platform/callback', async (c) => {
+  if (!onPlatform(c.env)) return c.redirect('/login');
+  const saved = endOAuth(c, PLATFORM_COOKIE);
+  const { code, state } = c.req.query();
+  if (!code || !saved.state) return c.redirect('/login?error=cancelled');
+  if (saved.state !== state) return c.redirect('/login?error=expired');
+  let who: { email?: unknown; name?: unknown; owner?: unknown; staff?: unknown };
+  try {
+    who = await controllerFetch(c.env, '/auth/token', { code, redirect: platformCallback(c) });
+  } catch (e) {
+    console.error(`Platform sign-in failed: ${(e as Error).message}`);
+    return c.redirect('/login?error=platform');
+  }
+  const email = String(who.email || '').trim().toLowerCase();
+  if (!EMAIL_RE.test(email)) return c.redirect('/login?error=platform');
+  const name = String(who.name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  if (who.owner || who.staff) {
+    const user = await ensurePerson(c.env, email, name, true);
+    if (!user) return c.redirect('/login?error=platform');
+    const extra = who.staff && !who.owner ? [auditStmt(c.env.DB, user.id, 'platform_staff_signed_in', user.id, { email })] : [];
+    await createSession(c, user.id, extra);
+    return c.redirect(saved.next);
+  }
+  const existing = await c.env.DB.prepare('SELECT status FROM users WHERE email = ?').bind(email).first<{ status: string }>();
+  if (existing && existing.status !== 'disabled') return signIn(c, email, name, null, saved.next);
+  // The platform counted this as a sign-in; we refused it, so keep this app off their "Your apps".
+  c.executionCtx.waitUntil(controllerFetch(c.env, '/api/tenant/signins/remove', { email }).catch((e) => console.error(`signins/remove failed: ${(e as Error).message}`)));
+  setCookie(c, 'tv_denied', email, { secure: cookieBase(c).secure, sameSite: 'Lax', path: '/', maxAge: 300 });
+  return c.redirect('/login?error=no_access');
+});

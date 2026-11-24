@@ -38,9 +38,8 @@
 			// Other instances: the API their apps call with a token, and notifications passed on (worker/v1.ts, worker/relay.ts).
 			"/v1/*",
 			"/relay/*",
-			// The SleekSite platform's health check, console sign-in and calls in (worker/platform.ts).
+			// The SleekSky platform's health check and scheduled calls in (worker/platform.ts). Platform sign-in is under /auth/*.
 			"/_health",
-			"/_admin/*",
 			"/_platform/*"
 		]
 	},

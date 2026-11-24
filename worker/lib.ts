@@ -47,7 +47,8 @@ export interface Env {
   /** Set by the SleekSite platform when it runs this instance (worker/platform.ts); absent when self-hosted. */
   WORKSPACE_ID?: string;
   CONTROLLER_URL?: string;
-  CONTROLLER_KEY?: string;
+  /** The way to the platform's API (https://sky/...), set by the controller; it knows which app is calling. */
+  SKY?: Fetcher;
   PLATFORM_DOMAIN?: string;
   WORKSPACE_SUBDOMAIN?: string;
   APP_PRODUCT?: string;

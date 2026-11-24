@@ -30,6 +30,7 @@ const MESSAGES: Record<string, string> = {
   google: "Google didn't complete the sign-in. Please try again.",
   workos: "The email sign-in didn't complete. Please try again.",
   microsoft: "Microsoft didn't complete the sign-in. Please try again.",
+  platform: "SleekSite didn't complete the sign-in. Please try again.",
   unverified: "That account's email address isn't verified.",
 };
 
@@ -37,7 +38,7 @@ const MESSAGES: Record<string, string> = {
  * Which sign-in methods this instance has set up, whether it still needs setting up (nobody in it yet), and the
  * team's name and wordmark.
  */
-type Methods = { google: boolean; microsoft: boolean; workos: boolean; code?: boolean; setup?: boolean; name?: string; wordmark?: string | null };
+type Methods = { google: boolean; microsoft: boolean; workos: boolean; code?: boolean; setup?: boolean; platform?: boolean; name?: string; wordmark?: string | null };
 
 /** POSTs to our own sign-in endpoints; the answer's `error`, if any, is thrown as a message. */
 async function post<T>(url: string, body: unknown): Promise<T> {
@@ -91,11 +92,12 @@ export function Login() {
           {error && MESSAGES[error] && <div className="si-msg" role="alert">{MESSAGES[error]}</div>}
           {methods?.setup ? <SetupForm name={methods.name || 'Taskivities'} next={next} /> : (
             <>
+              {methods?.platform && <a className="gbtn" data-act="signin-platform" href={`/auth/platform${q}`}>Continue with SleekSite</a>}
               {methods?.google && <a className="gbtn" href={`/auth/login${q}`}>{GLOGO} Continue with Google</a>}
               {methods?.microsoft && <a className="gbtn" href={`/auth/microsoft${q}`}>{MSLOGO} Continue with Microsoft</a>}
               {methods?.workos && <a className="gbtn" data-act="signin-email" href={`/auth/workos${q}`}>{I.mail(18)} Continue with email</a>}
-              {methods?.code && <CodeForm next={next} first={!methods.google && !methods.microsoft && !methods.workos} />}
-              {methods && !methods.google && !methods.microsoft && !methods.workos && !methods.code && (
+              {methods?.code && <CodeForm next={next} first={!methods.platform && !methods.google && !methods.microsoft && !methods.workos} />}
+              {methods && !methods.platform && !methods.google && !methods.microsoft && !methods.workos && !methods.code && (
                 <div className="si-msg" role="status">No way to sign in is set up here yet. Ask whoever runs this instance.</div>
               )}
               <div className="si-foot">Only people an admin has added can sign in.</div>

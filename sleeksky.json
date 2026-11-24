@@ -2,13 +2,15 @@
   "id": "taskivities",
   "name": "Taskivities",
   "home": "/",
+  "platform_signin": true,
+  "signin_path": "/auth/platform",
   "assets": {
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
     "run_worker_first": [
       "/api/*", "/logo.svg", "/wordmark.svg", "/manifest.webmanifest", "/icons/*", "/hooks/*", "/upload/*", "/auth/*",
       "/mcp", "/mcp/*", "/authorize", "/token", "/register", "/.well-known/*", "/v1/*", "/relay/*",
-      "/_health", "/_admin/*", "/_platform/*"
+      "/_health", "/_platform/*"
     ]
   },
   "resources": {
@@ -22,8 +24,29 @@
     { "name": "VAPID", "kind": "vapid" }
   ],
   "vars": { "TEAM_TZ": "America/New_York", "UPDATE_REPO": "off" },
-  "schedules": [{ "every": "30m" }],
+  "schedules": [{ "every": "30m", "path": "/_platform/tick" }],
   "egress": "any",
   "payments": "none",
+  "products": [
+    {
+      "id": "taskivities",
+      "name": "Taskivities",
+      "description": "Your team's tasks and projects in one place: everyone's week at a glance, repeating tasks, notifications and AI assistants.",
+      "icon": "rocket",
+      "color": "lagoon",
+      "replaces": [
+        "Asana",
+        "Trello",
+        "Monday"
+      ],
+      "variants": [
+        {
+          "id": "taskivities-team",
+          "name": "Team",
+          "price": 8
+        }
+      ]
+    }
+  ],
   "release": { "build": "npm run build", "config": "dist/taskivities_local/wrangler.json", "assets_dir": "dist/client" }
 }
