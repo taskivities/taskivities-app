@@ -9,9 +9,9 @@
 //   POST mail/signin-code      email a sign-in code from the platform's mail domain
 //   POST signins/remove        someone signed in through the platform but was refused here
 //
-// The platform's calls into this instance (the dispatch Worker refuses outside requests to /_platform/*, so no token):
+// The platform's calls into this instance (the dispatch Worker refuses outside requests to /_sky/*, so no token):
 //   GET  /_health              checked after every deploy
-//   POST /_platform/tick       every 30 minutes (sleeksky.json "schedules"): morning summaries instead of a Cron Trigger
+//   POST /_sky/tick       every 30 minutes (sleeksky.json "schedules"): morning summaries instead of a Cron Trigger
 //
 // Sign-in through the platform (worker/auth.ts, "platform_signin" in sleeksky.json): GET /auth/platform sends the
 // browser to the console's /auth, which comes back to /auth/platform/callback with a one-time code; this app swaps it

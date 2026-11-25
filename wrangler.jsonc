@@ -40,7 +40,7 @@
 			"/relay/*",
 			// The SleekSky platform's health check and scheduled calls in (worker/platform.ts). Platform sign-in is under /auth/*.
 			"/_health",
-			"/_platform/*"
+			"/_sky/*"
 		]
 	},
 	"d1_databases": [

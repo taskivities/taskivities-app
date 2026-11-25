@@ -38,7 +38,7 @@ app.get('/_health', async (c) => {
   const ok = await c.env.DB.prepare('SELECT 1 AS one').first().then(() => true, () => false);
   return c.json({ ok }, ok ? 200 : 503);
 });
-app.route('/_platform', platformRoutes);
+app.route('/_sky', platformRoutes);
 
 app.get('/logo.svg', serveLogo);
 // The team's wordmark, when one is uploaded (public too: the sign-in page shows it).

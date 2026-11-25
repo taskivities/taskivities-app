@@ -21,7 +21,7 @@ section into the new version's; `git push --follow-tags` publishes it.
   tokens (`CONTROLLER_KEY` is gone). Account owners sign in with a new **Continue with SleekSite** button
   (`/auth/platform`), which replaces the console's one-time `/_admin/auth/sso` links; other people sign in through it
   only if they're already users here. Storage limits come from the platform's `init` call, and the platform calls only
-  `/_platform/tick` (every 30 minutes); `/_platform/owners` and `/_platform/quota` are removed. Self-hosted instances
+  `/_sky/tick` (every 30 minutes); `/_platform/owners` and `/_platform/quota` are removed. Self-hosted instances
   are unchanged.
 
 ## v0.14.0 (2026-11-19)

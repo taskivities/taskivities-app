@@ -10,7 +10,7 @@
     "run_worker_first": [
       "/api/*", "/logo.svg", "/wordmark.svg", "/manifest.webmanifest", "/icons/*", "/hooks/*", "/upload/*", "/auth/*",
       "/mcp", "/mcp/*", "/authorize", "/token", "/register", "/.well-known/*", "/v1/*", "/relay/*",
-      "/_health", "/_platform/*"
+      "/_health", "/_sky/*"
     ]
   },
   "resources": {
@@ -24,7 +24,7 @@
     { "name": "VAPID", "kind": "vapid" }
   ],
   "vars": { "TEAM_TZ": "America/New_York", "UPDATE_REPO": "off" },
-  "schedules": [{ "every": "30m", "path": "/_platform/tick" }],
+  "schedules": [{ "every": "30m", "path": "/_sky/tick" }],
   "egress": "any",
   "payments": "none",
   "products": [
