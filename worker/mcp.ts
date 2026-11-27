@@ -3,7 +3,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpAgent } from 'agents/mcp';
 import { z } from 'zod';
-import { diffDays, isDate } from '../shared/dates';
+import { diffDays, isDate, stampIn } from '../shared/dates';
 import { isLate, lastDay, lateDays, shownOn } from '../shared/rules';
 import { describe as describeRepeat } from '../shared/repeat';
 import { EFFORT_TYPES, effortFor, effortFromInput, effortLabel, effortTotal } from '../shared/effort';
@@ -110,7 +110,7 @@ const durationArg = z.number().int().min(1).max(DURATION_MAX).describe(
 
 const userLabel = (dir: Directory, id: string | null) => (id ? (dir.users.get(id)?.name ?? 'Former member') : null);
 
-function describeTask(t: Task, dir: Directory, t0: string) {
+function describeTask(t: Task, dir: Directory, t0: string, tz: string) {
   const p = dir.projects.find((x) => x.id === t.projectId);
   const effort = p?.effort ? effortFor(t.effort, p.effort) : null;
   return {
@@ -126,6 +126,9 @@ function describeTask(t: Task, dir: Directory, t0: string) {
     shown_on: shownOn(t, t0),
     ...(isLate(t, t0) ? { days_late: lateDays(t, t0) } : {}),
     ...(t.status === 'done' ? { done_on: t.doneOn, done_by: userLabel(dir, t.doneBy) } : {}),
+    /** When the task was entered and last changed, as 'YYYY-MM-DD HH:MM' in your time zone (a timesheet entry made the next morning shows here). */
+    created_at: stampIn(t.createdAt, tz),
+    updated_at: stampIn(t.updatedAt, tz),
     ...(t.notes ? { notes: t.notes } : {}),
     ...(p?.effort ? { effort: effort ? effortLabel(p.effort, effort) : null } : {}),
     ...(t.series?.active ? { repeats: describeRepeat(t.series.rule, t.series.anchor) } : {}),
@@ -311,7 +314,9 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
         description:
           'Tasks in your projects, grouped by the day the app shows them on. Rollover works as in the app: an open task ' +
           "whose due date has passed is shown on today (with days_late), and a task finished late is shown on the day it was finished. " +
-          'So "what is on today" includes carried-over tasks. Dates are YYYY-MM-DD in your time zone; from defaults to today and to defaults to from ' +
+          'So "what is on today" includes carried-over tasks. created_at and updated_at say when each task was entered and last changed ' +
+          '(YYYY-MM-DD HH:MM), so you can tell a task logged on its day from one caught up later. ' +
+          'Dates are YYYY-MM-DD in your time zone; from defaults to today and to defaults to from ' +
           `(at most ${MAX_RANGE_DAYS} days).`,
         inputSchema: {
           user: z.string().optional().describe('Only tasks assigned to this person: name, first name, email, or "me".'),
@@ -348,7 +353,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
             today: t0, from, to,
             count: tasks.length,
             ...(tasks.length > MAX_RESULTS ? { truncated: true, note: `Showing the first ${MAX_RESULTS}; narrow the range or filters.` } : {}),
-            tasks: tasks.slice(0, MAX_RESULTS).map((t) => describeTask(t, dir, t0)),
+            tasks: tasks.slice(0, MAX_RESULTS).map((t) => describeTask(t, dir, t0, v.tz)),
           };
         }),
     );
@@ -385,7 +390,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
             effort: args.effort !== undefined ? toEffort(project, args.effort) : undefined,
             durationDays: args.duration_days,
           }, this.via);
-          return { created: describeTask(task, dir, t0) };
+          return { created: describeTask(task, dir, t0, v.tz) };
         }),
     );
 
@@ -434,7 +439,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
             repeat: args.stop_repeating ? null : args.repeat ? toRepeat(args.repeat) : undefined,
             skip: args.skip,
           }, this.via);
-          return { updated: describeTask(task, dir, t0), ...(next ? { next_copy: describeTask(next, dir, t0) } : {}) };
+          return { updated: describeTask(task, dir, t0, v.tz), ...(next ? { next_copy: describeTask(next, dir, t0, v.tz) } : {}) };
         }),
     );
 
@@ -472,7 +477,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
         },
       },
       (args) =>
-        this.run(async (v, dir, t0) => ({ commented_on: describeTask(await addComment(this.env, v, args.id, args.text, this.via), dir, t0) })),
+        this.run(async (v, dir, t0) => ({ commented_on: describeTask(await addComment(this.env, v, args.id, args.text, this.via), dir, t0, v.tz) })),
     );
 
     this.server.registerTool(
@@ -504,7 +509,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           for (const ref of args.remove ?? []) task = await changeChecklist(this.env, v, args.id, { op: 'remove', itemId: find(await current(), ref) }, this.via);
           if (args.add?.length) task = await changeChecklist(this.env, v, args.id, { op: 'add', text: args.add.join('\n') }, this.via);
           if (!task) throw bad('Nothing to change: pass add, check, uncheck or remove.');
-          return { updated: describeTask(task, dir, t0) };
+          return { updated: describeTask(task, dir, t0, v.tz) };
         }),
     );
 
@@ -572,7 +577,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
             task = await addAttachmentBytes(this.env, v, args.id, bytes, args.name, args.type ?? (args.text !== undefined && !/\.[a-z0-9]+$/i.test(args.name) ? 'text/plain' : undefined), this.via);
           }
           const added = task.attachments[task.attachments.length - 1];
-          return { attached: added.link ? { id: added.id, name: added.name, link: added.link } : { id: added.id, name: added.name, type: added.type, size: added.size }, task: describeTask(task, dir, t0) };
+          return { attached: added.link ? { id: added.id, name: added.name, link: added.link } : { id: added.id, name: added.name, type: added.type, size: added.size }, task: describeTask(task, dir, t0, v.tz) };
         }),
     );
 
@@ -621,7 +626,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
       (args) =>
         this.run(async (v, dir, t0) => {
           const t = await setArchived(this.env, v, args.id, !args.restore, this.via);
-          return { [args.restore ? 'restored' : 'archived']: describeTask(t, dir, t0) };
+          return { [args.restore ? 'restored' : 'archived']: describeTask(t, dir, t0, v.tz) };
         }),
     );
 
@@ -647,7 +652,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           let task: Task | null = null;
           for (const b of args.stop_waiting_on ?? []) task = (await setBlocker(this.env, v, args.id, b, false, this.via)).task;
           for (const b of args.wait_on ?? []) task = (await setBlocker(this.env, v, args.id, b, true, this.via)).task;
-          return { task: describeTask(task!, dir, t0) };
+          return { task: describeTask(task!, dir, t0, v.tz) };
         }),
     );
 
@@ -674,7 +679,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
             effort = toEffort(p, args.effort);
           }
           const { task, next } = await updateTaskWithNext(this.env, v, args.id, { status: 'done', effort }, this.via);
-          return { completed: describeTask(task, dir, t0), ...(next ? { next_copy: describeTask(next, dir, t0) } : {}) };
+          return { completed: describeTask(task, dir, t0, v.tz), ...(next ? { next_copy: describeTask(next, dir, t0, v.tz) } : {}) };
         }),
     );
 
@@ -695,7 +700,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           await loadVisibleTask(this.env.DB, v, args.id); // "not found" before "who?"
           const to = findUser(dir, v, args.to);
           const task = await updateTask(this.env, v, args.id, { assigneeId: to.id, note: args.note, thisOnly: args.this_only }, this.via);
-          return { transferred: describeTask(task, dir, t0) };
+          return { transferred: describeTask(task, dir, t0, v.tz) };
         }),
     );
 
@@ -719,7 +724,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           await loadVisibleTask(this.env.DB, v, args.id);
           const who = args.person ? findUser(dir, v, args.person).id : null;
           const task = await setFollowing(this.env, v, args.id, args.follow ?? true, who, this.via);
-          return { [args.follow === false ? 'unfollowed' : 'following']: describeTask(task, dir, t0) };
+          return { [args.follow === false ? 'unfollowed' : 'following']: describeTask(task, dir, t0, v.tz) };
         }),
     );
 
@@ -737,7 +742,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
         annotations: { readOnlyHint: true },
       },
       (args) =>
-        this.run(async (_v, dir, t0) => {
+        this.run(async (v, dir, t0) => {
           const project = findProject(dir, args.project);
           if (!isDate(args.date)) throw bad('Use a real day in YYYY-MM-DD form.');
           const day = args.date;
@@ -756,9 +761,9 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           return {
             project: project.name,
             date: day,
-            done: done.map((t) => describeTask(t, dir, t0)),
+            done: done.map((t) => describeTask(t, dir, t0, v.tz)),
             ...(project.effort ? { effort_done: effortTotal(project.effort, done.map((t) => t.effort)) || null } : {}),
-            still_open: open.map((t) => describeTask(t, dir, t0)),
+            still_open: open.map((t) => describeTask(t, dir, t0, v.tz)),
           };
         }),
     );

@@ -3,6 +3,7 @@ import { feedParts, isFeed, localProjects, localUsers, localUsersOf, myProjectsE
 import { DOW, MONL, addDays, fmt, parseDate, toDate, weekStart } from '../../shared/dates';
 import { type Freq, type Repeat, cleanRepeat, describe, presets, sameRule } from '../../shared/repeat';
 import { isAdmin, onProject } from '../../shared/rules';
+import { allPicked, toggleAll } from '../pick';
 import { PRIORITIES, appName, type NotifyPrefs, type Priority, type Project, type Task, type User } from '../../shared/types';
 import {
   assignable, closePop, defaultDraftDate, moveTasks, openConnect, openPop, viewProject, disableUser, enableUser, setPage, setPriority, setProject, setRepeat, signOut, switchablePeople, transfer,
@@ -359,6 +360,17 @@ function SwitchPop({ p, s }: { p: Pop; s: State }) {
   const flip = (xs: string[], id: string) => (xs.includes(id) ? xs.filter((x) => x !== id) : [...xs, id]);
   const pickPerson = (id: string) => viewMulti({ ...picked, people: flip(picked.people, id) });
   const pickProject = (id: string) => viewMulti({ ...picked, projects: id === 'all' ? [] : flip(picked.projects, id) });
+  // Several: "Select all" / "Clear" on a section's heading, for the rows the search shows there.
+  const bulk = (kind: 'people' | 'projects', ids: string[]) => {
+    if (!several || ids.length < 2) return null;
+    const all = allPicked(picked[kind], ids);
+    return (
+      <button className="sw-all" data-act={`all-${kind}`} aria-label={`${all ? 'Clear' : 'Select all'} ${ids.length} ${kind === 'people' ? 'people' : 'projects'}${q ? ` matching “${q}”` : ''}`}
+        onClick={() => viewMulti({ ...picked, [kind]: toggleAll(picked[kind], ids) })}>
+        {all ? 'Clear' : q ? `Select all ${ids.length}` : 'Select all'}
+      </button>
+    );
+  };
   const Chk = ({ on }: { on: boolean }) => <span className={`sw-chk ${on ? 'on' : ''}`} aria-hidden="true">{on && I.check(11)}</span>;
 
   const goPerson = (id: string) => { closePop(false); focusLater('[data-act="person"]'); viewPerson(id); };
@@ -395,16 +407,18 @@ function SwitchPop({ p, s }: { p: Pop; s: State }) {
 
   // With other instances connected, this one's sections are named too, like theirs.
   const home = s.sources.length ? appName(s.settings) : null;
-  const head = (label: string) => (home ? <div className="pop-h sw-src"><i className="home" />{home}<span>· {label}</span></div> : <div className="pop-h">{label}</div>);
+  const head = (label: string, extra?: React.ReactNode) => (home
+    ? <div className="pop-h sw-src"><i className="home" />{home}<span>· {label}</span>{extra}</div>
+    : <div className="pop-h">{label}{extra}</div>);
   const peopleSec = people.length > 0 && (
     <div key="people" data-sec="people">
-      {head('People')}
+      {head('People', bulk('people', people.map((u) => u.id)))}
       {people.map(personBtn)}
     </div>
   );
   const projectsSec = (showAll || projects.length > 0) && (
     <div key="projects" data-sec="projects">
-      {head('Projects')}
+      {head('Projects', bulk('projects', projects.map((pr) => pr.id)))}
       {showAll && (
         <button className={`opt ${!several && curProj === 'all' ? 'cur' : ''}`} data-p="all"
           {...(several ? { role: 'menuitemcheckbox', 'aria-checked': !picked.projects.length } : {})}
@@ -427,7 +441,8 @@ function SwitchPop({ p, s }: { p: Pop; s: State }) {
     <div key={src.id} data-sec={`src-${src.id}`}>
       {(projFirst ? [['Projects', prj], ['People', ppl]] as const : [['People', ppl], ['Projects', prj]] as const).map(([label, list]) => list.length > 0 && (
         <div key={label}>
-          <div className="pop-h sw-src"><i style={{ background: src.color }} />{src.name}<span>· {label}</span></div>
+          <div className="pop-h sw-src"><i style={{ background: src.color }} />{src.name}<span>· {label}</span>
+            {label === 'People' ? bulk('people', (list as User[]).map((u) => u.id)) : bulk('projects', (list as Project[]).map((pr) => pr.id))}</div>
           {label === 'People' ? (list as User[]).map(personBtn) : (list as Project[]).map(projBtn)}
         </div>
       ))}
