@@ -9,6 +9,19 @@ section into the new version's; `git push --follow-tags` publishes it.
 
 ## Unreleased
 
+### Added
+
+- **AI assistants:** every task an assistant sees (`list_tasks` and the other task tools) now says when it was added
+  and last changed (`created_at`, `updated_at`, in your time zone), so a check can tell whether a day's tasks were
+  entered that day or caught up later.
+- **Switcher:** with **Several** on, **Select all** on the People or Projects heading ticks every row your search
+  shows (type "daily update", then Select all), and becomes **Clear** once they're all ticked.
+
+### Changed
+
+- **Tasks:** a task's details show the time it was added next to who created it ("Nov 22 · 12:47"), not just the
+  day; hover for the full date and when it last changed.
+
 ## v0.14.0 (2026-11-19)
 
 ### Added

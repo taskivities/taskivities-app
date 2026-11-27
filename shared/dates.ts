@@ -39,3 +39,12 @@ export const rel = (s: string, today: string): string =>
 /** Today's date in a time zone, as YYYY-MM-DD. */
 export const todayIn = (tz: string): string =>
   new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+
+/** An ISO timestamp as 'YYYY-MM-DD HH:MM' (24-hour) in a time zone: when something happened, where this person is. */
+export const stampIn = (iso: string, tz: string): string => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date(iso));
+  const p = (type: string) => parts.find((x) => x.type === type)?.value ?? '';
+  return `${p('year')}-${p('month')}-${p('day')} ${p('hour')}:${p('minute')}`;
+};

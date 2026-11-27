@@ -1207,3 +1207,7 @@ a.att-n:hover{color:var(--accent);text-decoration:underline}
 .ss-paste code{flex:1;min-width:0;overflow-wrap:anywhere;font-size:12px}
 .ss-body .set-actions{margin-top:16px}
 .ss-body .ss-small{margin-top:10px;font-size:12px;color:var(--faint)}
+/* Several: "Select all" / "Clear" at the end of a section's heading. */
+.sw-list .pop-h{display:flex;align-items:center}
+.sw-all{margin-left:auto;padding:0 4px;border-radius:4px;font-size:12px;font-weight:500;color:var(--accent)}
+.sw-all:hover{text-decoration:underline}
