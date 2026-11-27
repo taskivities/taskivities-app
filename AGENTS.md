@@ -30,6 +30,7 @@ When you add a feature, change how something behaves, or fix a bug that someone 
 
 ```bash
 npm run typecheck                             # the app and the Worker
+npm test                                      # unit tests in test/ (Node's built-in runner, no install)
 npx tsc -p demo/tsconfig.json --noEmit        # the public demo, which wraps the Worker
 ```
 

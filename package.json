@@ -9,6 +9,7 @@
     "build": "tsc -b && vite build",
     "preview": "npm run build && vite preview",
     "typecheck": "tsc -b",
+    "test": "node --test test/",
     "deploy": "node scripts/tenant.mjs deploy",
     "tenant": "node scripts/tenant.mjs",
     "push-keys": "node scripts/push-keys.mjs",

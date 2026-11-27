@@ -114,7 +114,9 @@ export function Drawer() {
             <dd><button className="field" data-act="proj" title={p?.description} onClick={(e) => openPop({ type: 'proj', mode: 'task', id: t.id }, e.currentTarget)}>
               <Dot color={p?.color ?? '#A0A0AB'} />{p?.name} <span className="c">{I.chev()}</span></button></dd>
             <dt>Created by</dt>
-            <dd className="plain"><Avatar user={creator} /> {displayName(creator)}<span style={{ color: 'var(--faint)' }}>· {stamp(t.createdAt, s.today).split(' · ')[0]}</span></dd>
+            <dd className="plain"><Avatar user={creator} /> {displayName(creator)}<span style={{ color: 'var(--faint)' }}
+              title={`Added ${new Date(t.createdAt).toLocaleString()}${t.updatedAt !== t.createdAt ? ` · last changed ${new Date(t.updatedAt).toLocaleString()}` : ''}`}>
+              · {stamp(t.createdAt, s.today)}</span></dd>
             <dt>Followers</dt>
             <dd className="fol"><Followers t={t} s={s} /></dd>
           </dl>
