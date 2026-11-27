@@ -35,8 +35,7 @@ export function Drawer() {
   const eff = p?.effort ? effortFor(t.effort, p.effort) : null;
   const ext = sourceOf(s, t.id); // a task on another instance (src/sources.ts)
   const B = ({ children }: { children: ReactNode }) => <b>{children}</b>;
-  const showNotes = !!(t.notes || notes || s.notesOpen);
-  const showList = t.checklist.length > 0 || s.checklistOpen;
+    const showList = t.checklist.length > 0 || s.checklistOpen;
   const uploading = s.uploads.filter((u) => u.taskId === t.id);
   const showFiles = t.attachments.length > 0 || uploading.length > 0;
   const showDeps = (t.blockedBy?.length ?? 0) + (t.blocks?.length ?? 0) > 0;
@@ -119,16 +118,9 @@ export function Drawer() {
             <dd className="fol"><Followers t={t} s={s} /></dd>
           </dl>
           {t.series?.active && t.status === 'open' && <div className="dr-hint">Changes to this copy carry over to future ones.</div>}
-          {showNotes && (
-            <>
-              <div className="lbl">Notes</div>
-              <textarea data-field="notes" placeholder="Add details or links…" value={notes} onChange={(e) => setNotes(e.target.value)}
-                onBlur={() => {
-                  if (notes.trim() !== t.notes) void patchTask(t.id, { notes });
-                  if (!notes.trim()) set({ notesOpen: false }); // still empty: fold it away again
-                }} />
-            </>
-          )}
+          <div className="lbl notes-lbl">Notes <span className="muted">· you can edit these any time</span></div>
+          <textarea data-field="notes" className="notes-box" aria-label="Notes" placeholder="Notes: what was done, details, links. You can edit these any time." value={notes} onChange={(e) => setNotes(e.target.value)}
+            onBlur={() => { if (notes.trim() !== t.notes) void patchTask(t.id, { notes }); }} />
           {showDeps && <Dependencies t={t} s={s} />}
           {showList && <Checklist key={`checklist:${t.id}`} taskId={t.id} items={t.checklist} />}
           {showFiles && <Attachments taskId={t.id} files={t.attachments} uploading={uploading} s={s} />}
@@ -136,41 +128,48 @@ export function Drawer() {
             <input id="attach-input" type="file" multiple hidden tabIndex={-1} aria-hidden="true"
               onChange={(e) => { const f = [...(e.target.files ?? [])]; e.target.value = ''; if (f.length) void uploadFiles(t.id, f); }} />
           )}
-          {(!showNotes || !showList || !showDeps || !showFiles) && (
-            // Empty notes / no checklist: just small buttons, so the history sits higher up.
+          {(!showList || !showDeps || !showFiles) && (
+            // No checklist / dependencies / files: just small buttons, so the history sits higher up.
             <div className="dr-adds">
-              {!showNotes && <button className="notes-add" data-act="notes" title="Add notes  (⇧N)" onClick={() => editNotes(t.id)}>{I.plus(13)} Add notes</button>}
               {!showList && <button className="notes-add" data-act="checklist" title="Add a checklist  (⇧C)" onClick={() => editChecklist(t.id)}>{I.check(12)} Add checklist</button>}
               {!showDeps && <button className="notes-add" data-act="deps" title="Tasks this one waits on, or that wait on it"
                 onClick={(e) => openPop({ type: 'deps', mode: 'task', id: t.id, side: 'blockedBy' }, e.currentTarget)}>{I.link(13)} Add dependency</button>}
               {!showFiles && <button className="notes-add" data-act="attach" title={s.attachmentsOn ? 'Attach files or links  (⇧A) · or drop / paste files here' : 'Attach links to files  (⇧A)'} onClick={(e) => attachMenu(t.id, e.currentTarget)}>{I.clip(13)} {s.attachmentsOn ? 'Attach files' : 'Attach a link'}</button>}
             </div>
           )}
-          <div className="lbl">Comments &amp; history <span className="muted">· permanently recorded</span></div>
-          <CommentBox key={`comment:${t.id}`} taskId={t.id} />
-          {!events ? <div className="trail-loading">Loading history…</div> : (
-            <ol className="trail">
-              {late && (
-                <li className="sys"><span className="av" style={{ '--s': '22px' } as React.CSSProperties}>{I.refresh()}</span>
-                  <div><div className="tx">Rolling over each day since <B>{fmt(addDays(t.dueDate, 1))}</B> (shown, not logged)</div></div></li>
+          <div className="trail-sec">
+            <button className="trail-h" data-act="trail" aria-expanded={s.trailOpen} aria-controls="trail-body" onClick={() => set({ trailOpen: !s.trailOpen })}>
+              <span className={`trail-chev${s.trailOpen ? ' open' : ''}`}>{I.chev()}</span>
+              Feedback &amp; audit trail <span className="muted">· permanently recorded</span>
+              {t.comments > 0 && <span className="trail-n" title={`${t.comments} feedback comment${t.comments > 1 ? 's' : ''}`}>({t.comments})</span>}
+            </button>
+            {s.trailOpen && <div id="trail-body">
+              <CommentBox key={`comment:${t.id}`} taskId={t.id} />
+              {!events ? <div className="trail-loading">Loading history…</div> : (
+                <ol className="trail">
+                  {late && (
+                    <li className="sys"><span className="av" style={{ '--s': '22px' } as React.CSSProperties}>{I.refresh()}</span>
+                      <div><div className="tx">Rolling over each day since <B>{fmt(addDays(t.dueDate, 1))}</B> (shown, not logged)</div></div></li>
+                  )}
+                  {groupHistory(events).map((g) => g.kind === 'comment' ? (
+                    <li key={g.key} className="cmt">
+                      <Avatar user={s.users[g.event.actorId]} />
+                      <div>
+                        <div className="tx">
+                          <b>{firstName(s.users[g.event.actorId])}</b>
+                          {g.event.via && <> <span className="via" title={`Written by an AI assistant acting as ${displayName(s.users[g.event.actorId])}`}>via {g.event.via}</span></>}
+                          <span className="tm"> · {stamp(g.event.at, s.today)}</span>
+                        </div>
+                        <div className="bubble">{linkify(g.event.note ?? '')}</div>
+                      </div>
+                    </li>
+                  ) : (
+                    <ChangesEntry key={g.key} g={g} s={s} />
+                  ))}
+                </ol>
               )}
-              {groupHistory(events).map((g) => g.kind === 'comment' ? (
-                <li key={g.key} className="cmt">
-                  <Avatar user={s.users[g.event.actorId]} />
-                  <div>
-                    <div className="tx">
-                      <b>{firstName(s.users[g.event.actorId])}</b>
-                      {g.event.via && <> <span className="via" title={`Written by an AI assistant acting as ${displayName(s.users[g.event.actorId])}`}>via {g.event.via}</span></>}
-                      <span className="tm"> · {stamp(g.event.at, s.today)}</span>
-                    </div>
-                    <div className="bubble">{linkify(g.event.note ?? '')}</div>
-                  </div>
-                </li>
-              ) : (
-                <ChangesEntry key={g.key} g={g} s={s} />
-              ))}
-            </ol>
-          )}
+            </div>}
+          </div>
         </div>
       </aside>
     </>
@@ -351,12 +350,12 @@ function CommentBox({ taskId }: { taskId: string }) {
   return (
     <div className="cbox">
       <textarea ref={ref} id="comment-box" data-field="comment" rows={text.includes('\n') || text.length > 60 ? 3 : 1} maxLength={COMMENT_MAX}
-        placeholder="Write a comment…  (C)" aria-label="Write a comment" value={text} onChange={(e) => setText(e.target.value)}
+        placeholder="Add feedback (permanent, can't be edited)…  (C)" aria-label="Add feedback (permanent, can't be edited)" value={text} onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }} />
       {text.trim() && (
         <div className="cbox-f">
           <span>⌘ Enter to post · everyone on the project can see it</span>
-          <button className="btn-primary sm" onClick={send}>Comment</button>
+          <button className="btn-primary sm" onClick={send}>Post feedback</button>
         </div>
       )}
     </div>

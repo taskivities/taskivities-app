@@ -17,6 +17,7 @@ section into the new version's; `git push --follow-tags` publishes it.
 
 ### Changed
 
+- **Tasks:** Notes are now always open in a task, ready to type in (no more "Add notes" button), and sit above the rest. Comments are now called **Feedback & audit trail · permanently recorded**: a quieter section below the notes, folded away until you open it (it shows how many feedback comments there are; pressing **C** opens it). Feedback can't be edited or deleted, so write daily updates in Notes, where you can change them later.
 - **SleekSky platform:** instances run by the platform now talk to it over its `SKY` binding instead of signed
   tokens (`CONTROLLER_KEY` is gone). Account owners sign in with a new **Continue with SleekSite** button
   (`/auth/platform`), which replaces the console's one-time `/_admin/auth/sso` links; other people sign in through it

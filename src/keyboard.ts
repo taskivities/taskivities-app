@@ -198,7 +198,7 @@ export function onKeyDown(e: KeyboardEvent) {
   // C = comment, ⇧C = checklist (by Shift, like N / ⇧N).
   if (k === 'f' && task.assigneeId !== s.me!.id) { e.preventDefault(); void setFollowing(task.id, !task.followers.includes(s.me!.id)); return; }
   if ((k === 'c' || k === 'C') && e.shiftKey) { e.preventDefault(); editChecklist(task.id); return; }
-  if (k === 'c' || k === 'C') { e.preventDefault(); if (s.drawer !== task.id) openDrawer(task.id); focusLater('#comment-box'); return; }
+  if (k === 'c' || k === 'C') { e.preventDefault(); if (s.drawer !== task.id) openDrawer(task.id); set({ trailOpen: true }); focusLater('#comment-box'); return; }
   if (k === 'x' || (k === ' ' && (isDiv || t.classList.contains('drawer')))) { e.preventDefault(); toggleDone(task.id); return; }
   const anchor = (act: 'move' | 'assign' | 'repeat') =>
     (s.drawer ? document.querySelector<HTMLElement>(`.drawer [data-act="${act}"]`) : curNav()?.querySelector<HTMLElement>(`[data-act="${act}"]`)) || curNav();

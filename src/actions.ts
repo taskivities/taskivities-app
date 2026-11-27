@@ -481,7 +481,7 @@ export function closePop(restore: boolean) {
 export const popIs = (t: PopType) => S().pop?.type === t;
 
 export function openDrawer(id: string, editTitle = false) {
-  set({ drawer: id, pop: null, ...(S().drawer !== id ? { notesOpen: false, checklistOpen: false } : {}) });
+  set({ drawer: id, pop: null, ...(S().drawer !== id ? { notesOpen: false, checklistOpen: false, trailOpen: false } : {}) });
   focusLater(editTitle ? '.dr-title' : '.drawer');
 }
 /** Opens a task by id, loading it first if this window doesn't have it (e.g. from a notification). */

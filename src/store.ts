@@ -111,8 +111,10 @@ export interface State {
   /** How many weeks the Board shows side by side (it scrolls sideways past one). Remembered on this device. */
   boardWeeks: number;
   drawer: string | null;
-  /** Empty notes are collapsed to an "Add notes" button; this opens the box (button or ⇧N). Reset per task. */
+  /** Notes are always open now; ⇧N still just moves the cursor there. Reset per task. */
   notesOpen: boolean;
+  /** The task's "Feedback & audit trail" is collapsed until opened (click, or C to give feedback). Reset per task. */
+  trailOpen: boolean;
   /** Same for an empty checklist (button or ⇧C). */
   checklistOpen: boolean;
   /** Files on their way up (attachments), with progress. */
@@ -217,6 +219,7 @@ export const useStore = create<State>()(() => ({
   boardWeeks: Math.min(BOARD_WEEKS_MAX, Math.max(1, Number(localStorage.getItem('tv:boardWeeks')) || 1)),
   drawer: null,
   notesOpen: false,
+  trailOpen: false,
   checklistOpen: false,
   uploads: [],
   attachmentsOn: false,

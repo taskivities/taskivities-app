@@ -748,7 +748,7 @@ button.gbtn{font:inherit;font-weight:600;cursor:pointer}
 .theme-row .seg button{padding:4px 9px;font-size:12px}
 :root[data-theme="dark"] .seg button.on{background:#3A3A46;box-shadow:none}
 
-/* Empty notes fold into this button (Drawer). */
+/* Buttons that add an optional section to the task (Drawer). */
 .notes-add{display:inline-flex;align-items:center;gap:6px;margin:0 0 22px;padding:6px 10px 6px 8px;border-radius:8px;border:1px dashed var(--line-strong);color:var(--muted);font-size:12.5px;font-weight:500}
 .notes-add:hover,.notes-add:focus-visible{color:var(--accent);border-color:var(--accent-line);background:var(--accent-soft)}
 
@@ -1207,3 +1207,15 @@ a.att-n:hover{color:var(--accent);text-decoration:underline}
 .ss-paste code{flex:1;min-width:0;overflow-wrap:anywhere;font-size:12px}
 .ss-body .set-actions{margin-top:16px}
 .ss-body .ss-small{margin-top:10px;font-size:12px;color:var(--faint)}
+
+/* ---------- notes (always open) and the quieter, collapsed feedback & audit trail (Drawer) ---------- */
+.dr-body .notes-box{min-height:112px;border-color:var(--line-strong);background:var(--panel)}
+.notes-lbl{color:var(--text-2);font-size:12.5px}
+.trail-sec{margin:8px 0 0;padding-top:12px;border-top:1px solid var(--line)}
+.trail-h{display:flex;align-items:center;gap:6px;width:100%;padding:4px 0;margin:0 0 8px;border:0;background:none;color:var(--faint);font-size:12px;font-weight:500;text-align:left;cursor:pointer;flex-wrap:wrap}
+.trail-h:hover,.trail-h:focus-visible{color:var(--text-2)}
+.trail-h .muted{color:var(--faint);font-weight:400}
+.trail-n{color:var(--accent);font-weight:600;font-variant-numeric:tabular-nums}
+.trail-chev{display:inline-flex;transform:rotate(-90deg);transition:transform .12s}
+.trail-chev.open{transform:none}
+@media (prefers-reduced-motion:reduce){.trail-chev{transition:none}}
