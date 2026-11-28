@@ -224,6 +224,9 @@ function AssignPop({ p, s }: { p: Pop; s: State }) {
   );
 }
 
+/** The row last ticked in "Select several", the anchor for a shift-click range. */
+let lastPick: { kind: 'people' | 'projects'; id: string } | null = null;
+
 function PrioPop({ p, s }: { p: Pop; s: State }) {
   const qa = p.mode === 'qa';
   const cur = qa ? s.draft.priority : s.tasks[p.id!]?.priority;
@@ -357,8 +360,26 @@ function SwitchPop({ p, s }: { p: Pop; s: State }) {
   const picked = currentSel(s);
   const nPicked = picked.people.length + picked.projects.length;
   const flip = (xs: string[], id: string) => (xs.includes(id) ? xs.filter((x) => x !== id) : [...xs, id]);
-  const pickPerson = (id: string) => viewMulti({ ...picked, people: flip(picked.people, id) });
-  const pickProject = (id: string) => viewMulti({ ...picked, projects: id === 'all' ? [] : flip(picked.projects, id) });
+  // Shift-click ticks (or unticks) every row between the last one clicked and this one, in the order shown.
+  const order = { people: [] as string[], projects: [] as string[] };
+  const pickRange = (kind: 'people' | 'projects', id: string, shift: boolean) => {
+    const cur = picked[kind];
+    const a = lastPick && lastPick.kind === kind && shift ? order[kind].indexOf(lastPick.id) : -1;
+    const b = order[kind].indexOf(id);
+    if (a < 0 || b < 0) {
+      lastPick = { kind, id };
+      return flip(cur, id);
+    }
+    const on = cur.includes(lastPick!.id);
+    const span = order[kind].slice(Math.min(a, b), Math.max(a, b) + 1);
+    lastPick = { kind, id };
+    return on ? [...new Set([...cur, ...span])] : cur.filter((x) => !span.includes(x));
+  };
+  const pickPerson = (id: string, shift = false) => viewMulti({ ...picked, people: pickRange('people', id, shift) });
+  const pickProject = (id: string, shift = false) => {
+    if (id === 'all') { lastPick = null; return viewMulti({ ...picked, projects: [] }); }
+    viewMulti({ ...picked, projects: pickRange('projects', id, shift) });
+  };
   const Chk = ({ on }: { on: boolean }) => <span className={`sw-chk ${on ? 'on' : ''}`} aria-hidden="true">{on && I.check(11)}</span>;
 
   const goPerson = (id: string) => { closePop(false); focusLater('[data-act="person"]'); viewPerson(id); };
@@ -372,21 +393,22 @@ function SwitchPop({ p, s }: { p: Pop; s: State }) {
   // Order by the button that opened it (not the page), so picking several doesn't reshuffle the list under you.
   const projFirst = p.type === 'projpick';
   const personBtn = (u: User) => {
+    order.people.push(u.id);
     const open = tasks.filter((t) => t.assigneeId === u.id && inView(t)).length;
     const late = tasks.filter((t) => t.assigneeId === u.id && isLate(t, s.today)).length;
     return (
       <button key={u.id} className={`opt ${!several && u.id === curPerson ? 'cur' : ''}`} data-u={u.id}
         {...(several ? { role: 'menuitemcheckbox', 'aria-checked': picked.people.includes(u.id) } : {})}
-        onClick={() => (several ? pickPerson(u.id) : goPerson(u.id))}>
+        onClick={(e) => (several ? pickPerson(u.id, e.shiftKey) : goPerson(u.id))}>
         {several && <Chk on={picked.people.includes(u.id)} />}<Avatar user={u} size={22} /><span className="sw-name">{u.id === me ? 'Me' : displayName(u)}</span>
         <span className="r">{late > 0 && <><span style={{ color: 'var(--late)' }}>{late} late</span> · </>}{open} open</span>
       </button>
     );
   };
-  const projBtn = (pr: Project) => (
+  const projBtn = (pr: Project) => (order.projects.push(pr.id),
     <button key={pr.id} className={`opt ${!several && pr.id === curProj ? 'cur' : ''}`} data-p={pr.id} title={pr.description}
       {...(several ? { role: 'menuitemcheckbox', 'aria-checked': picked.projects.includes(pr.id) } : {})}
-      onClick={() => (several ? pickProject(pr.id) : goProject(pr.id))}>
+      onClick={(e) => (several ? pickProject(pr.id, e.shiftKey) : goProject(pr.id))}>
       {several && <Chk on={picked.projects.includes(pr.id)} />}<span className="sw-dot"><Dot color={pr.color} /></span>
       {/* Under its instance's heading, without the instance's name in front. */}
       <span className="sw-name">{pr.feed ? pr.name.slice(pr.feed.length + 3) : pr.name}</span><span className="r">{projCount(pr.id)}</span>
