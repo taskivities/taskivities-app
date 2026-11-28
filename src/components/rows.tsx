@@ -156,7 +156,6 @@ const CheckMark = ({ t }: { t: Task }) => {
   );
 };
 
-/** The task's effort, if its project tracks it and it has one: "M", "5 pts", "1h 30m". */
 /** Lasts several days: "Day 2 of 3" while it runs (open), otherwise "3 days". */
 function DurationMark({ t }: { t: Task }) {
   const today = useStore().today;
@@ -170,9 +169,16 @@ function DurationMark({ t }: { t: Task }) {
 function EffortMark({ t }: { t: Task }) {
   const p = useStore().projects[t.projectId];
   const v = p?.effort ? effortFor(t.effort, p.effort) : null;
-  if (!p?.effort || !v) return null;
+  const e = p?.effort && p.estimate ? effortFor(t.estimate, p.effort) : null;
+  if (!p?.effort || (!v && !e)) return null;
+  // Effort spent shows when there is one; otherwise the estimate, marked "~".
+  if (!v) {
+    const est = effortLabel(p.effort, e!);
+    return <span className="efmark est" title={`Estimate: ${est}`} aria-label={`Estimate ${est}`}>~{est}</span>;
+  }
   const label = effortLabel(p.effort, v);
-  return <span className="efmark" title={`${EFFORT_TYPES[p.effort].name}: ${label}`} aria-label={`Effort ${label}`}>{label}</span>;
+  const title = `${EFFORT_TYPES[p.effort].name}: ${label}${e ? ` (estimate ${effortLabel(p.effort, e)})` : ''}`;
+  return <span className="efmark" title={title} aria-label={`Effort ${label}`}>{label}</span>;
 }
 
 /**

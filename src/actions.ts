@@ -193,7 +193,7 @@ export async function loadEvents(id: string) {
 }
 
 // ---------- task edits ----------
-type Changes = Partial<Pick<Task, 'title' | 'notes' | 'projectId' | 'assigneeId' | 'dueDate' | 'durationDays' | 'priority' | 'status' | 'effort'>>;
+type Changes = Partial<Pick<Task, 'title' | 'notes' | 'projectId' | 'assigneeId' | 'dueDate' | 'durationDays' | 'priority' | 'status' | 'effort' | 'estimate'>>;
 
 const putTask = (t0: Task) => {
   if (isDropped(t0.id)) return; // added here, but the server refused it: it's gone
@@ -275,6 +275,9 @@ export const setEffort = (id: string, effort: string | null, thenDone = false) =
   void patchTask(id, thenDone ? { effort, status: 'done' } : { effort },
     { toast: thenDone ? `Done: ${t.title}` : effort ? `Effort: ${storedEffortLabel(effort)}` : 'Effort cleared' });
 };
+/** Sets a task's estimate (stored form, like effort, or null). */
+export const setEstimate = (id: string, estimate: string | null) =>
+  void patchTask(id, { estimate }, { toast: estimate ? `Estimate: ${storedEffortLabel(estimate)}` : 'Estimate cleared' });
 export const transfer = (id: string, to: string, note?: string, thisOnly?: boolean) =>
   patchTask(id, { assigneeId: to }, { note, thisOnly, toast: `Transferred to ${firstName(S().users[to])}${thisOnly ? ' (just this one)' : ''}` });
 
@@ -377,7 +380,7 @@ export async function moveTasks(ids: string[], dueDate: string) {
 
 /** Fields that edits made while a task was being added can change (kept when its real copy arrives). */
 const LOCAL_KEYS = ['title', 'notes', 'projectId', 'assigneeId', 'assignedBy', 'dueDate', 'durationDays', 'priority', 'status', 'doneAt', 'doneOn', 'doneBy',
-  'effort', 'checklist', 'followers', 'attachments', 'blockedBy', 'blocks', 'comments'] as const satisfies readonly (keyof Task)[];
+  'effort', 'estimate', 'checklist', 'followers', 'attachments', 'blockedBy', 'blocks', 'comments'] as const satisfies readonly (keyof Task)[];
 
 /**
  * Adds the draft as a task. It shows at once (under a temporary id) and the box clears; the server makes it in the
@@ -760,8 +763,8 @@ export async function enableUser(id: string, projects?: string[]) {
   }
 }
 /** Creates or saves a project. Returns an error message to show in the editor, or the project's id. */
-export async function saveProject(p: { id: string | null; name: string; color: string; description: string; members: string[]; effort: EffortType | null; effortRequired: boolean }): Promise<{ error: string } | { id: string }> {
-  const body = { name: p.name, color: p.color, description: p.description, members: p.members, effort: p.effort, effortRequired: p.effortRequired };
+export async function saveProject(p: { id: string | null; name: string; color: string; description: string; members: string[]; effort: EffortType | null; effortRequired: boolean; estimate: boolean }): Promise<{ error: string } | { id: string }> {
+  const body = { name: p.name, color: p.color, description: p.description, members: p.members, effort: p.effort, effortRequired: p.effortRequired, estimate: p.estimate };
   try {
     let id = p.id;
     if (id) await api.patch(`/api/admin/projects/${id}`, body);

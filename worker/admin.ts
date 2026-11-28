@@ -223,7 +223,7 @@ admin.post('/users/:id/enable', async (c) => {
 });
 
 // ---------- projects ----------
-export interface ProjectBody { name?: string; color?: string; description?: string; members?: string[]; effort?: string | null; effortRequired?: boolean }
+export interface ProjectBody { name?: string; color?: string; description?: string; members?: string[]; effort?: string | null; effortRequired?: boolean; estimate?: boolean }
 
 async function validateProject(db: D1Database, b: ProjectBody, selfId?: string) {
   const name = (b.name ?? '').trim();
@@ -237,7 +237,8 @@ async function validateProject(db: D1Database, b: ProjectBody, selfId?: string) 
   if (b.effort != null && !isEffortType(b.effort)) throw bad('Unknown way of tracking effort.');
   const effort = b.effort ?? null;
   const effortRequired = !!effort && !!b.effortRequired;
-  return { name, color, description, effort, effortRequired };
+  const estimate = !!effort && !!b.estimate;
+  return { name, color, description, effort, effortRequired, estimate };
 }
 
 /** Creates a project as `v` (an admin), with its members (ids of members, not admins: they're on every project). */
@@ -246,8 +247,8 @@ export async function createProject(env: Env, v: Viewer, b: ProjectBody): Promis
   const p = await validateProject(db, b);
   const id = uid();
   const stmts = [
-    db.prepare('INSERT INTO projects (id, name, color, description, effort, effort_required, archived, created_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?)')
-      .bind(id, p.name, p.color, p.description, p.effort, p.effortRequired ? 1 : 0, nowIso()),
+    db.prepare('INSERT INTO projects (id, name, color, description, effort, effort_required, estimate, archived, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)')
+      .bind(id, p.name, p.color, p.description, p.effort, p.effortRequired ? 1 : 0, p.estimate ? 1 : 0, nowIso()),
     ...(b.members ?? []).map((u) => db.prepare("INSERT OR IGNORE INTO project_members (user_id, project_id) SELECT id, ? FROM users WHERE id = ? AND role = 'member' AND status != 'disabled'").bind(id, u)),
     auditStmt(db, v.id, 'project_created', id, p),
     bumpDirectory(db),
@@ -268,10 +269,11 @@ export async function updateProject(env: Env, v: Viewer, id: string, b: ProjectB
   const p = await validateProject(db, {
     name: b.name ?? cur.name, color: b.color ?? cur.color, description: b.description ?? cur.description,
     effort: b.effort !== undefined ? b.effort : cur.effort, effortRequired: b.effortRequired ?? !!cur.effort_required,
+    estimate: b.estimate ?? !!cur.estimate,
   }, id);
   const stmts: D1PreparedStatement[] = [
-    db.prepare('UPDATE projects SET name = ?, color = ?, description = ?, effort = ?, effort_required = ? WHERE id = ?')
-      .bind(p.name, p.color, p.description, p.effort, p.effortRequired ? 1 : 0, id),
+    db.prepare('UPDATE projects SET name = ?, color = ?, description = ?, effort = ?, effort_required = ?, estimate = ? WHERE id = ?')
+      .bind(p.name, p.color, p.description, p.effort, p.effortRequired ? 1 : 0, p.estimate ? 1 : 0, id),
   ];
   if (b.members) {
     // Disabled people keep their place on the project (for when they're enabled again); the editor doesn't list them.

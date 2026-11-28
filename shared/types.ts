@@ -37,6 +37,8 @@ export interface Project {
   /** How the project measures effort on its tasks (null: it doesn't), and whether a task needs it before it's done. */
   effort: EffortType | null;
   effortRequired: boolean;
+  /** Its tasks can carry an estimate too, in the same measure as effort (only while effort is tracked). */
+  estimate?: boolean;
   /** App only: a project on another instance (src/sources.ts): that instance's name. Never in this instance's lists. */
   feed?: string;
 }
@@ -133,6 +135,8 @@ export interface Task {
   followers: string[];
   /** '<type>:<value>' (shared/effort.ts), or null. Only counts when its type is what the project tracks now. */
   effort: string | null;
+  /** The estimate, stored like effort ('<type>:<value>'), or null. Optional; only shown where the project asks for one. */
+  estimate?: string | null;
   /** Tasks this one waits on (its blockers), and tasks waiting on it. Archived tasks are left out. Rules: shared/deps.ts. */
   blockedBy: TaskLink[];
   blocks: TaskLink[];
@@ -153,6 +157,8 @@ export type EventType =
   | 'priority_changed'
   /** Effort set, changed or cleared: from/to are stored values ('time:90', 'tshirt:M'; null: none). */
   | 'effort_set'
+  /** Estimate set, changed or cleared: from/to are stored values, like effort_set. */
+  | 'estimate_set'
   /** Duration changed: from/to are the number of days (null: 1 day). */
   | 'duration_set'
   | 'project_changed'

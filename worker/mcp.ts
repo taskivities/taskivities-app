@@ -99,6 +99,16 @@ function toEffort(p: Project, input: string): string | null {
   if (!v) throw bad(`${p.name} tracks effort as ${EFFORT_TYPES[p.effort].name.toLowerCase()}: ${EFFORT_TYPES[p.effort].hint}. "${input}" isn't one.`);
   return v;
 }
+/** An estimate ("2h", "M", "5") for a task in `p`, in the project's effort measure; "" clears it (null). */
+function toEstimate(p: Project, input: string): string | null {
+  if (input.trim() === '') return null;
+  if (!p.effort || !p.estimate) throw bad(`${p.name} doesn't ask for estimates.`);
+  return toEffort(p, input);
+}
+const estimateArg = z.string().describe(
+  'Optional. Only for projects that ask for estimates (list_projects: effort.estimates): how much the task should take, ' +
+  'in the same measure as effort ("2h", "M" or "5"). Pass "" to clear it.',
+);
 const effortArg = z.string().describe(
   'Only for projects that track effort (list_projects shows how): a time like "1h 30m" or "45m", a size like "M", or story points like "5".',
 );
@@ -113,6 +123,7 @@ const userLabel = (dir: Directory, id: string | null) => (id ? (dir.users.get(id
 function describeTask(t: Task, dir: Directory, t0: string) {
   const p = dir.projects.find((x) => x.id === t.projectId);
   const effort = p?.effort ? effortFor(t.effort, p.effort) : null;
+  const estimate = p?.effort && p.estimate ? effortFor(t.estimate, p.effort) : null;
   return {
     id: t.id,
     title: t.title,
@@ -128,6 +139,7 @@ function describeTask(t: Task, dir: Directory, t0: string) {
     ...(t.status === 'done' ? { done_on: t.doneOn, done_by: userLabel(dir, t.doneBy) } : {}),
     ...(t.notes ? { notes: t.notes } : {}),
     ...(p?.effort ? { effort: effort ? effortLabel(p.effort, effort) : null } : {}),
+    ...(p?.effort && p.estimate ? { estimate: estimate ? effortLabel(p.effort, estimate) : null } : {}),
     ...(t.series?.active ? { repeats: describeRepeat(t.series.rule, t.series.anchor) } : {}),
     ...(t.comments ? { comments: t.comments } : {}),
     ...(t.followers.some((f) => f !== t.assigneeId) ? { followers: t.followers.filter((f) => f !== t.assigneeId).map((f) => userLabel(dir, f)) } : {}),
@@ -295,7 +307,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
             name: p.name,
             description: p.description,
             color: p.color,
-            ...(p.effort ? { effort: { tracks: EFFORT_TYPES[p.effort].name, values: EFFORT_TYPES[p.effort].hint, required_to_finish: p.effortRequired } } : {}),
+            ...(p.effort ? { effort: { tracks: EFFORT_TYPES[p.effort].name, values: EFFORT_TYPES[p.effort].hint, required_to_finish: p.effortRequired, estimates: !!p.estimate } } : {}),
             members: (dir.assignable.get(p.id) ?? []).map((id) => {
               const u = dir.users.get(id)!;
               return { name: u.name, email: u.email, ...(u.role === 'admin' ? { role: 'admin' } : {}), ...(u.status === 'invited' ? { status: 'invited' } : {}) };
@@ -372,6 +384,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           notes: z.string().optional().describe('Optional details.'),
           repeat: repeatArg.optional(),
           effort: effortArg.optional(),
+          estimate: estimateArg.optional(),
           duration_days: durationArg.optional(),
         },
       },
@@ -383,6 +396,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
             title: args.title, notes: args.notes, projectId: project.id, assigneeId: assignee.id,
             dueDate: args.due_date, priority: toPriority(args.priority), repeat: args.repeat ? toRepeat(args.repeat) : undefined,
             effort: args.effort !== undefined ? toEffort(project, args.effort) : undefined,
+            estimate: args.estimate !== undefined ? toEstimate(project, args.estimate) : undefined,
             durationDays: args.duration_days,
           }, this.via);
           return { created: describeTask(task, dir, t0) };
@@ -412,6 +426,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           stop_repeating: z.boolean().optional().describe("Stop repeating for good. The current copy stays as a normal task. Can't be undone."),
           skip: z.boolean().optional().describe('Repeating tasks: skip this copy. Pass on its own.'),
           effort: effortArg.optional().describe('Effort, for projects that track it (list_projects): "1h 30m", "M" or "5". Pass "" to clear it.'),
+          estimate: estimateArg.optional(),
           duration_days: durationArg.optional(),
         },
       },
@@ -419,14 +434,16 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
         this.run(async (v, dir, t0) => {
           if (args.repeat && args.stop_repeating) throw bad('Pass repeat or stop_repeating, not both.');
           const newProject = args.project !== undefined ? findProject(dir, args.project) : null;
-          const curProject = args.effort !== undefined && !newProject ? (await loadVisibleTask(this.env.DB, v, args.id)).project_id : null;
-          const effortProject = args.effort === undefined ? null : newProject ?? dir.projects.find((p) => p.id === curProject) ?? null;
-          if (args.effort !== undefined && !effortProject) throw bad('That task is in a project you can no longer see.');
+          const needsProject = args.effort !== undefined || args.estimate !== undefined;
+          const curProject = needsProject && !newProject ? (await loadVisibleTask(this.env.DB, v, args.id)).project_id : null;
+          const effortProject = !needsProject ? null : newProject ?? dir.projects.find((p) => p.id === curProject) ?? null;
+          if (needsProject && !effortProject) throw bad('That task is in a project you can no longer see.');
           const { task, next } = await updateTaskWithNext(this.env, v, args.id, {
             title: args.title,
             notes: args.notes,
             projectId: newProject?.id,
-            effort: effortProject ? toEffort(effortProject, args.effort!) : undefined,
+            effort: effortProject && args.effort !== undefined ? toEffort(effortProject, args.effort) : undefined,
+            estimate: effortProject && args.estimate !== undefined ? toEstimate(effortProject, args.estimate) : undefined,
             dueDate: args.due_date,
             durationDays: args.duration_days,
             priority: args.priority ? toPriority(args.priority) : undefined,
@@ -778,7 +795,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
     };
     const describeProject = (dir: Directory, p: Project) => ({
       name: p.name, description: p.description, color: p.color,
-      effort: p.effort ? { tracks: EFFORT_TYPES[p.effort].name, required_to_finish: p.effortRequired } : null,
+      effort: p.effort ? { tracks: EFFORT_TYPES[p.effort].name, required_to_finish: p.effortRequired, estimates: !!p.estimate } : null,
       members: [...dir.users.values()].filter((u) => u.role !== 'admin' && u.projects.includes(p.id)).map((u) => u.name),
     });
 
@@ -796,6 +813,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           members: z.array(z.string()).optional().describe('People to add (names or emails).'),
           effort: effortArgIn.optional(),
           effort_required: z.boolean().optional().describe('Effort must be recorded before a task is marked done.'),
+          estimates: z.boolean().optional().describe('Tasks can also carry an optional estimate, in the same measure as effort.'),
         },
       },
       (args) =>
@@ -806,7 +824,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           const id = await createProject(this.env, v, {
             name: args.name, description: args.description ?? '', members: m.ids,
             color: args.color ?? PROJECT_COLORS.find((c) => !used.has(c)) ?? PROJECT_COLORS[dir.projects.length % PROJECT_COLORS.length],
-            effort: args.effort ? toEffortType(args.effort) : null, effortRequired: args.effort_required,
+            effort: args.effort ? toEffortType(args.effort) : null, effortRequired: args.effort_required, estimate: args.estimates,
           });
           const after = await loadDirectory(this.env.DB, v);
           return {
@@ -832,6 +850,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           remove_members: z.array(z.string()).optional().describe('Names or emails.'),
           effort: effortArgIn.optional(),
           effort_required: z.boolean().optional(),
+          estimates: z.boolean().optional().describe('Tasks can carry an optional estimate, in the same measure as effort.'),
         },
       },
       (args) =>
@@ -847,7 +866,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           }
           await updateProject(this.env, v, p.id, {
             name: args.name, description: args.description, color: args.color, members,
-            ...(args.effort ? { effort: toEffortType(args.effort) } : {}), effortRequired: args.effort_required,
+            ...(args.effort ? { effort: toEffortType(args.effort) } : {}), effortRequired: args.effort_required, estimate: args.estimates,
           });
           const after = await loadDirectory(this.env.DB, v);
           return { updated: describeProject(after, after.projects.find((x) => x.id === p.id)!) };

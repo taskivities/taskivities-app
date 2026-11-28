@@ -39,6 +39,8 @@ export interface Pop {
   q?: string;
   /** effort: mark the task done once the effort is chosen (it was required). */
   thenDone?: boolean;
+  /** effort: set the task's estimate instead of the effort spent. */
+  estimate?: boolean;
   /** deps: which side is being added: tasks this one waits on, or tasks waiting on it. */
   side?: 'blockedBy' | 'blocks';
 }
@@ -69,7 +71,7 @@ export interface Draft {
 export interface InviteDraft { emails: string; role: Role; projects: string[]; err: string | null; busy?: boolean }
 export interface ProjEdit {
   id: string | null; name: string; color: string; description: string; members: string[]; err: string | null; returnSel: string | null; busy?: boolean;
-  effort: EffortType | null; effortRequired: boolean;
+  effort: EffortType | null; effortRequired: boolean; estimate: boolean;
   /** Showing the "Archive this project?" confirmation. */
   archiving?: boolean;
   /** Opened from the quick-add's project menu: a new project becomes the draft's project. */

@@ -75,6 +75,8 @@ export interface NewTask {
   repeat?: unknown;
   /** Effort, stored form ('tshirt:M'; shared/effort.ts), if the project tracks it. */
   effort?: string | null;
+  /** Estimate, stored like effort, if the project asks for one. */
+  estimate?: string | null;
   /** How many days it runs, from dueDate (1 or null: just that day). */
   durationDays?: number | null;
 }
@@ -87,23 +89,27 @@ function checkDuration(d: unknown): number | null {
 }
 
 /** How a project tracks effort (type null: it doesn't). */
-export async function projectEffort(db: D1Database, projectId: string): Promise<{ type: EffortType | null; required: boolean }> {
-  const r = await db.prepare('SELECT effort, effort_required FROM projects WHERE id = ?').bind(projectId).first<{ effort: string | null; effort_required: number }>();
+export async function projectEffort(db: D1Database, projectId: string): Promise<{ type: EffortType | null; required: boolean; estimate: boolean }> {
+  const r = await db.prepare('SELECT effort, effort_required, estimate FROM projects WHERE id = ?').bind(projectId)
+    .first<{ effort: string | null; effort_required: number; estimate: number }>();
   const type = isEffortType(r?.effort) ? r.effort : null;
-  return { type, required: !!type && !!r?.effort_required };
+  return { type, required: !!type && !!r?.effort_required, estimate: !!type && !!r?.estimate };
 }
 
 /** Checks a stored effort value ('<type>:<value>') against the project's type. null / '' clear it. */
-function checkEffort(type: EffortType | null, stored: unknown): string | null {
+function checkEffort(type: EffortType | null, stored: unknown, what = 'effort'): string | null {
   if (stored === null || stored === '') return null;
-  if (!type) throw bad("This task's project doesn't track effort.");
-  if (typeof stored !== 'string') throw bad('Invalid effort.');
+  if (!type) throw bad(what === 'effort' ? "This task's project doesn't track effort." : "This task's project doesn't ask for estimates.");
+  if (typeof stored !== 'string') throw bad(`Invalid ${what}.`);
   const i = stored.indexOf(':');
   if (stored.slice(0, i) !== type) throw bad(`This project tracks effort as ${EFFORT_TYPES[type].name.toLowerCase()}.`);
   const v = effortValue(type, stored.slice(i + 1));
   if (!v) throw bad(`That isn't a valid ${EFFORT_TYPES[type].name.toLowerCase()} (${EFFORT_TYPES[type].hint}).`);
   return v;
 }
+/** Checks an estimate: the project must ask for one, and it's in the project's effort measure. */
+const checkEstimate = (pe: { type: EffortType | null; estimate: boolean }, stored: unknown) =>
+  checkEffort(pe.estimate ? pe.type : null, stored, 'estimate');
 const effortMissing = (type: EffortType) =>
   bad(`This project needs the effort (${EFFORT_TYPES[type].name.toLowerCase()}) before a task is marked done.`);
 
@@ -130,6 +136,7 @@ export async function createTask(env: Env, v: Viewer, b: NewTask, via: string | 
   const due = rule ? firstDate(rule, b.dueDate) : b.dueDate;
   if (rule?.until && rule.until < due) throw bad('The repeat ends before the first date.');
   const effort = b.effort != null && b.effort !== '' ? checkEffort((await projectEffort(db, b.projectId)).type, b.effort) : null;
+  const estimate = b.estimate != null && b.estimate !== '' ? checkEstimate(await projectEffort(db, b.projectId), b.estimate) : null;
   const duration = checkDuration(b.durationDays);
 
   const id = uid();
@@ -139,9 +146,9 @@ export async function createTask(env: Env, v: Viewer, b: NewTask, via: string | 
   if (rule) stmts.push(insertSeries(db, seriesId!, rule, due, { title, notes, projectId: b.projectId, assigneeId: b.assigneeId, priority: b.priority }, v.id, now));
   stmts.push(
     db.prepare(
-      `INSERT INTO tasks (id, title, notes, project_id, assignee_id, created_by, assigned_by, due_date, priority, status, created_at, updated_at, version, series_id, effort, duration_days)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ${CURRENT_VERSION}, ?, ?, ?)`,
-    ).bind(id, title, notes, b.projectId, b.assigneeId, v.id, v.id, due, b.priority, now, now, seriesId, effort, duration),
+      `INSERT INTO tasks (id, title, notes, project_id, assignee_id, created_by, assigned_by, due_date, priority, status, created_at, updated_at, version, series_id, effort, estimate, duration_days)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ${CURRENT_VERSION}, ?, ?, ?, ?)`,
+    ).bind(id, title, notes, b.projectId, b.assigneeId, v.id, v.id, due, b.priority, now, now, seriesId, effort, estimate, duration),
     eventStmt(db, {
       taskId: id, actorId: v.id, via, type: 'created', at: now,
       to: JSON.stringify({ assignee: b.assigneeId, due, priority: b.priority, project: b.projectId }),
@@ -149,6 +156,7 @@ export async function createTask(env: Env, v: Viewer, b: NewTask, via: string | 
   );
   if (rule) stmts.push(eventStmt(db, { taskId: id, actorId: v.id, via, type: 'repeat_set', to: describe(rule, due), at: now }));
   if (effort) stmts.push(eventStmt(db, { taskId: id, actorId: v.id, via, type: 'effort_set', to: effort, at: now }));
+  if (estimate) stmts.push(eventStmt(db, { taskId: id, actorId: v.id, via, type: 'estimate_set', to: estimate, at: now }));
   if (duration) stmts.push(eventStmt(db, { taskId: id, actorId: v.id, via, type: 'duration_set', to: String(duration), at: now }));
   await db.batch(stmts);
   notify(env, [{ to: b.assigneeId, kind: 'assigned', actorId: v.id, via, taskId: id, isNew: true }]);
@@ -161,6 +169,8 @@ export interface Patch {
   status?: 'open' | 'done';
   /** Effort, stored form ('time:90', 'tshirt:M'; shared/effort.ts), or null to clear it. */
   effort?: string | null;
+  /** Estimate, stored like effort, or null to clear it. Only for projects that ask for one. */
+  estimate?: string | null;
   /** How many days it runs from its due date; 1 or null: just that day. */
   durationDays?: number | null;
   /** Optional message attached to a transfer. */
@@ -259,6 +269,11 @@ export async function applyPatch(env: Env, v: Viewer, id: string, b: Patch, via:
     const val = checkEffort((await effortOf()).type, b.effort);
     if (val !== effortNow) { set('effort', val); ev({ type: 'effort_set', from: effortNow, to: val }); }
     effortNow = val;
+  }
+  if (b.estimate !== undefined) {
+    const val = checkEstimate(await effortOf(), b.estimate);
+    const was = t.estimate ?? null;
+    if (val !== was) { set('estimate', val); ev({ type: 'estimate_set', from: was, to: val }); }
   }
   if (b.status === 'done' && t.status !== 'done') {
     const { type, required } = await effortOf();

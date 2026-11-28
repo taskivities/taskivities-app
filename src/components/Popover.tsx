@@ -6,7 +6,7 @@ import { isAdmin, onProject } from '../../shared/rules';
 import { PRIORITIES, appName, type NotifyPrefs, type Priority, type Project, type Task, type User } from '../../shared/types';
 import {
   assignable, closePop, defaultDraftDate, moveTasks, openConnect, openPop, viewProject, disableUser, enableUser, setPage, setPriority, setProject, setRepeat, signOut, switchablePeople, transfer,
-  updateUser, viewPerson, editNotes, editChecklist, attachMenu, attachFromDrive, attachLink, archiveTask, setFollowing, setEffort, setDuration, currentSel, setMultiPick, viewMulti, setBlocker,
+  updateUser, viewPerson, editNotes, editChecklist, attachMenu, attachFromDrive, attachLink, archiveTask, setFollowing, setEffort, setEstimate, setDuration, currentSel, setMultiPick, viewMulti, setBlocker,
 } from '../actions';
 import { focusLater } from '../focus';
 import { EFFORT_TYPES, effortFor, effortFromInput, fmtTime } from '../../shared/effort';
@@ -247,15 +247,18 @@ function PrioPop({ p, s }: { p: Pop; s: State }) {
 function EffortPop({ p, s }: { p: Pop; s: State }) {
   const t = s.tasks[p.id!];
   const proj = t ? s.projects[t.projectId] : null;
-  const type = proj?.effort ?? null;
-  const cur = t && type ? effortFor(t.effort, type) : null;
+  const est = !!p.estimate;
+  const type = proj?.effort && (!est || proj.estimate) ? proj.effort : null;
+  const stored0 = (est ? t?.estimate : t?.effort) ?? null;
+  const cur = t && type ? effortFor(stored0, type) : null;
   const [text, setText] = useState(cur && type === 'time' ? fmtTime(Number(cur)) : '');
   const [err, setErr] = useState('');
-  if (!t || !proj || !type) return <div className="pop-foot">This project doesn't track effort.</div>;
+  if (!t || !proj || !type) return <div className="pop-foot">{est ? "This project doesn't ask for estimates." : "This project doesn't track effort."}</div>;
   const pick = (stored: string | null) => {
     closePop(true);
-    if (stored === (t.effort ?? null) && !p.thenDone) return;
-    setEffort(t.id, stored, p.thenDone);
+    if (stored === stored0 && !p.thenDone) return;
+    if (est) setEstimate(t.id, stored);
+    else setEffort(t.id, stored, p.thenDone);
   };
   const saveTime = () => {
     const v = effortFromInput('time', text);
@@ -264,11 +267,11 @@ function EffortPop({ p, s }: { p: Pop; s: State }) {
   };
   return (
     <div className="effort-pop">
-      <div className="pop-h">{p.thenDone ? `Add the ${EFFORT_TYPES[type].name.toLowerCase()} to finish` : EFFORT_TYPES[type].name}</div>
+      <div className="pop-h">{est ? (type === 'time' ? 'Estimated time' : `Estimate (${EFFORT_TYPES[type].name.toLowerCase()})`) : p.thenDone ? `Add the ${EFFORT_TYPES[type].name.toLowerCase()} to finish` : EFFORT_TYPES[type].name}</div>
       {type === 'time' ? (
         <>
           <form className="ef-time" onSubmit={(e) => { e.preventDefault(); saveTime(); }}>
-            <input className="pin" id="pop-q" value={text} placeholder="e.g. 1h 30m" autoComplete="off" aria-label="Time spent"
+            <input className="pin" id="pop-q" value={text} placeholder="e.g. 1h 30m" autoComplete="off" aria-label={est ? 'Estimated time' : 'Time spent'}
               aria-invalid={!!err} onChange={(e) => { setText(e.target.value); setErr(''); }} />
             <button className="btn-primary sm" type="submit" data-act="effort-save">{p.thenDone ? 'Done' : 'Save'}</button>
           </form>

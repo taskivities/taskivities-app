@@ -16,6 +16,7 @@ section into the new version's; `git push --follow-tags` publishes it.
 - **AI assistants:** an assistant connected over MCP is told which instance it's using (the team's name and the
   app's address), and `list_projects` and `list_tasks` say so too. If you've connected several Taskivities instances
   to the same assistant, it can tell them apart and says which one it used.
+- **Effort:** a project that tracks effort can also ask for an estimate (tick **Ask for an estimate too** in the project's editor). Each task then has an optional **Estimate** in the task panel, in the same measure as its effort (time, size or points); it shows as a "~" badge until the effort is recorded, is in the task's history, and assistants can set it with `estimate` on `create_task` and `update_task`.
 
 ### Changed
 

@@ -33,6 +33,7 @@ export function Drawer() {
   const creator = s.users[t.createdBy];
   const p = s.projects[t.projectId];
   const eff = p?.effort ? effortFor(t.effort, p.effort) : null;
+  const est = p?.effort && p.estimate ? effortFor(t.estimate, p.effort) : null;
   const ext = sourceOf(s, t.id); // a task on another instance (src/sources.ts)
   const B = ({ children }: { children: ReactNode }) => <b>{children}</b>;
   const showNotes = !!(t.notes || notes || s.notesOpen);
@@ -108,6 +109,12 @@ export function Drawer() {
               <dt>Effort</dt>
               <dd><button className="field" data-act="effort" title={EFFORT_TYPES[p.effort].hint} onClick={(e) => openPop({ type: 'effort', mode: 'task', id: t.id }, e.currentTarget)}>
                 {I.gauge(15)} {eff ? effortLabel(p.effort, eff) : <span className="ph">{p.effortRequired && t.status === 'open' ? 'Needed to finish' : 'Add'}</span>}
+                <span className="c">{I.chev()}</span></button></dd>
+            </>}
+            {p?.effort && p.estimate && <>
+              <dt>Estimate</dt>
+              <dd><button className="field" data-act="estimate" title={`How much this should take (${EFFORT_TYPES[p.effort].name.toLowerCase()}). Optional.`} onClick={(e) => openPop({ type: 'effort', mode: 'task', id: t.id, estimate: true }, e.currentTarget)}>
+                {I.gauge(15)} {est ? effortLabel(p.effort, est) : <span className="ph">Add</span>}
                 <span className="c">{I.chev()}</span></button></dd>
             </>}
             <dt>Project</dt>
@@ -217,6 +224,9 @@ function EventText({ e, s }: { e: TaskEvent; s: State }) {
     case 'effort_set': return e.toValue
       ? (e.fromValue ? <>changed effort <b>{storedEffortLabel(e.fromValue)}</b> → <b>{storedEffortLabel(e.toValue)}</b></> : <>set effort to <b>{storedEffortLabel(e.toValue)}</b></>)
       : <>cleared effort (was <b>{storedEffortLabel(e.fromValue)}</b>)</>;
+    case 'estimate_set': return e.toValue
+      ? (e.fromValue ? <>changed the estimate <b>{storedEffortLabel(e.fromValue)}</b> → <b>{storedEffortLabel(e.toValue)}</b></> : <>estimated <b>{storedEffortLabel(e.toValue)}</b></>)
+      : <>cleared the estimate (was <b>{storedEffortLabel(e.fromValue)}</b>)</>;
     case 'duration_set': return <>set it to last <b>{daysLabel(Number(e.toValue) || 1)}</b>{e.fromValue && <> (was {daysLabel(Number(e.fromValue))})</>}</>;
     case 'priority_changed': return <>changed priority <b>{PRIORITIES[Number(e.fromValue) as Priority]?.name}</b> → <b>{PRIORITIES[Number(e.toValue) as Priority]?.name}</b></>;
     case 'project_changed': return <>moved to <b>{proj(e.toValue)}</b> from <b>{proj(e.fromValue)}</b></>;
