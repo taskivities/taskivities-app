@@ -7,6 +7,8 @@ import { describe } from '../../shared/repeat';
 import type { Task } from '../../shared/types';
 import { openDrawer, openPop, toggleDone } from '../actions';
 import { useStore } from '../store';
+import { useEffect, useState } from 'react';
+import { fmtTime } from '../../shared/effort';
 import { ariaFor, clockTime, daysLabel, dueRange, firstName, lateDays, linksOf } from '../util';
 import { blockedUntil, holdingUp, openBlockers, waitingBadly } from '../../shared/deps';
 import { Avatar, I, PrioTag, ProjPill } from './ui';
@@ -143,7 +145,7 @@ function Marks({ t }: { t: Task }) {
       {t.checklist.length > 0 && <CheckMark t={t} />}
       {n > 0 && <span className="clipmark" title={`${n} attachment${n > 1 ? 's' : ''}`} aria-label={`${n} attachments`}>{I.clip(11)}{n}</span>}
       {t.comments > 0 && <CommentMark n={t.comments} />}
-      <EffortMark t={t} /><DurationMark t={t} /><DepMark t={t} />
+      <TimerMark t={t} /><EffortMark t={t} /><DurationMark t={t} /><DepMark t={t} />
     </>
   );
 }
@@ -164,6 +166,25 @@ function DurationMark({ t }: { t: Task }) {
   const running = t.status === 'open' && t.dueDate <= today && today <= lastDay(t);
   const label = running ? `Day ${diffDays(today, t.dueDate) + 1} of ${n}` : daysLabel(n);
   return <span className="efmark" title={`Lasts ${daysLabel(n)}: ${dueRange(t)}. Overdue after the last day.`} aria-label={label}>{label}</span>;
+}
+
+/** Whole minutes a running timer has run, kept current (re-renders every 15 s). Never seconds. */
+export function useTimerMinutes(startedAt: string | null | undefined): number {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!startedAt) return;
+    const h = setInterval(() => tick((n) => n + 1), 15000);
+    return () => clearInterval(h);
+  }, [startedAt]);
+  return startedAt ? Math.max(0, Math.floor((Date.now() - Date.parse(startedAt)) / 60000)) : 0;
+}
+
+/** A running timer on a row: "● 12m". */
+function TimerMark({ t }: { t: Task }) {
+  const mins = useTimerMinutes(t.timer?.startedAt);
+  if (!t.timer) return null;
+  const label = mins ? fmtTime(mins) : '<1m';
+  return <span className="efmark timing" title={`Timer running: ${label} so far`} aria-label={`Timer running, ${label}`}>● {label}</span>;
 }
 
 function EffortMark({ t }: { t: Task }) {

@@ -42,6 +42,8 @@ export const I = {
   users: (s = 15) => <Svg s={s}><circle cx="6" cy="5.5" r="2.3" /><path d="M1.8 13.2c.4-2.2 2.1-3.5 4.2-3.5s3.8 1.3 4.2 3.5" /><path d="M10.4 3.4a2.2 2.2 0 0 1 0 4.2M12 9.9c1.2.5 2 1.6 2.2 3.3" /></Svg>,
   gear: (s = 15) => <Svg s={s}><circle cx="8" cy="8" r="2.1" /><path d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M3.6 12.4l1.1-1.1M11.3 4.7l1.1-1.1" /></Svg>,
   gauge: (s = 18) => <Svg s={s}><path d="M2.5 11.5a5.5 5.5 0 1 1 11 0" /><path d="M8 11.5l2.6-3.4" /></Svg>,
+  play: (s = 15) => <Svg s={s}><path d="M5 3.2v9.6l7.6-4.8z" /></Svg>,
+  stopSq: (s = 15) => <Svg s={s}><rect x="4" y="4" width="8" height="8" rx="1.4" /></Svg>,
   copy: (s = 18) => <Svg s={s}><rect x="5.5" y="5.5" width="8" height="8" rx="1.8" /><path d="M10.5 3.2V3a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.2" /></Svg>,
   trash: (s = 15) => <Svg s={s}><path d="M2.8 4.3h10.4M6.3 4.3V2.8h3.4v1.5M4.3 4.3l.6 9h6.2l.6-9" /></Svg>,
   edit: (s = 15) => <Svg s={s}><path d="M10.6 2.9l2.5 2.5-7.4 7.4-3.1.6.6-3.1z" /><path d="M9.2 4.3l2.5 2.5" /></Svg>,

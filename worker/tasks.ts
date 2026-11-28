@@ -1,7 +1,7 @@
 // Task rules shared by the REST API (worker/api.ts) and the MCP tools (worker/mcp.ts).
 // Every check about who may see or change a task lives here, so the two can't drift apart.
-import { addDays, isDate } from '../shared/dates';
-import { EFFORT_TYPES, type EffortType, effortFor, effortValue, isEffortType } from '../shared/effort';
+import { addDays, dayIn, diffDays, isDate } from '../shared/dates';
+import { EFFORT_TYPES, TIME_MAX_MIN, type EffortType, effortFor, effortValue, isEffortType } from '../shared/effort';
 import { type Repeat, cleanRepeat, describe, firstDate, nextDate, sameRule } from '../shared/repeat';
 import { CHECK_ITEMS_MAX, CHECK_TEXT_MAX, COMMENT_MAX, DURATION_MAX, NOTES_MAX, TITLE_MAX, type Priority, type Task } from '../shared/types';
 import {
@@ -89,11 +89,11 @@ function checkDuration(d: unknown): number | null {
 }
 
 /** How a project tracks effort (type null: it doesn't). */
-export async function projectEffort(db: D1Database, projectId: string): Promise<{ type: EffortType | null; required: boolean; estimate: boolean }> {
-  const r = await db.prepare('SELECT effort, effort_required, estimate FROM projects WHERE id = ?').bind(projectId)
-    .first<{ effort: string | null; effort_required: number; estimate: number }>();
+export async function projectEffort(db: D1Database, projectId: string): Promise<{ type: EffortType | null; required: boolean; estimate: boolean; timer: boolean }> {
+  const r = await db.prepare('SELECT effort, effort_required, estimate, timer FROM projects WHERE id = ?').bind(projectId)
+    .first<{ effort: string | null; effort_required: number; estimate: number; timer: number }>();
   const type = isEffortType(r?.effort) ? r.effort : null;
-  return { type, required: !!type && !!r?.effort_required, estimate: !!type && !!r?.estimate };
+  return { type, required: !!type && !!r?.effort_required, estimate: !!type && !!r?.estimate, timer: type === 'time' && !!r?.timer };
 }
 
 /** Checks a stored effort value ('<type>:<value>') against the project's type. null / '' clear it. */
@@ -173,6 +173,11 @@ export interface Patch {
   estimate?: string | null;
   /** How many days it runs from its due date; 1 or null: just that day. */
   durationDays?: number | null;
+  /**
+   * Active time tracking: start the task's timer, or stop it (adding the whole minutes it ran to the time spent, and
+   * widening the task's span to cover the days it ran). Marking a task done stops a running timer too.
+   */
+  timer?: 'start' | 'stop';
   /** Optional message attached to a transfer. */
   note?: string;
   /** Undo of your own last date move: allows putting a past due date back. */
@@ -275,6 +280,40 @@ export async function applyPatch(env: Env, v: Viewer, id: string, b: Patch, via:
     const was = t.estimate ?? null;
     if (val !== was) { set('estimate', val); ev({ type: 'estimate_set', from: was, to: val }); }
   }
+  // ----- timer (active time tracking) -----
+  const running = t.timer_started_at ?? null;
+  if (b.timer !== undefined && b.timer !== 'start' && b.timer !== 'stop') throw bad('Invalid timer action.');
+  if (b.timer && (b.dueDate !== undefined || b.durationDays !== undefined || b.effort !== undefined)) throw bad('Start or stop the timer on its own.');
+  if (b.timer === 'start') {
+    if (!(await effortOf()).timer) throw bad("This task's project doesn't use the timer.");
+    if (t.status !== 'open' || b.status === 'done') throw bad('Only an open task can be timed.');
+    if (running) throw bad('The timer is already running on this task.');
+    set('timer_started_at', now); set('timer_by', v.id);
+    ev({ type: 'timer_started' });
+  } else if (running && (b.timer === 'stop' || (b.status === 'done' && t.status !== 'done'))) {
+    set('timer_started_at', null); set('timer_by', null);
+    // Whole minutes, never seconds. Marking done with the time typed in (b.effort) overrides what the timer counted.
+    const mins = b.effort !== undefined ? 0 : Math.max(0, Math.round((Date.parse(now) - Date.parse(running)) / 60000));
+    ev({ type: 'timer_stopped', to: String(mins) });
+    if (mins > 0 && (await effortOf()).type === 'time') {
+      const had = Number(effortFor(effortNow, 'time') ?? 0);
+      const val = `time:${Math.min(TIME_MAX_MIN, had + mins)}`;
+      if (val !== effortNow) { set('effort', val); ev({ type: 'effort_set', from: effortNow, to: val }); }
+      effortNow = val;
+      // The span grows to cover the days the time was spent (never shrinks). Left alone if this change moves dates itself.
+      if (b.dueDate === undefined && b.durationDays === undefined) {
+        const from = dayIn(v.tz, running);
+        const start = from < t.due_date ? from : t.due_date;
+        const end0 = durationNow && durationNow > 1 ? addDays(t.due_date, durationNow - 1) : t.due_date;
+        const end = t0 > end0 ? t0 : end0;
+        const days = Math.min(DURATION_MAX, diffDays(end, start) + 1);
+        if (start !== t.due_date) { set('due_date', start); ev({ type: 'date_moved', from: t.due_date, to: start }); }
+        const d = days > 1 ? days : null;
+        // (durationNow is left as it was: a repeating task's next copy keeps the planned length, not the widened one.)
+        if (d !== durationNow) { set('duration_days', d); ev({ type: 'duration_set', from: durationNow ? String(durationNow) : null, to: d ? String(d) : null }); }
+      }
+    }
+  } else if (b.timer === 'stop') throw bad("The timer isn't running on this task.");
   if (b.status === 'done' && t.status !== 'done') {
     const { type, required } = await effortOf();
     if (required && type && !effortFor(effortNow, type)) throw effortMissing(type);

@@ -5,7 +5,7 @@ import { onProject } from '../shared/rules';
 import { applyUrl, startRouter } from './router';
 import { applyFeedDir, clientFor, connectingOrigin, feedParts, finishConnect, isFeed, nsId, srcCall, loadSources, localUsers, moveOnSources, sourcesRange, syncSources, taskFromSource, uploadTarget } from './sources';
 import { isDropped, liveId, newTemp, realId, tempOf } from './tempIds';
-import { type EffortType, effortFor, storedEffortLabel } from '../shared/effort';
+import { type EffortType, effortFor, fmtTime, storedEffortLabel } from '../shared/effort';
 import { ATTACH_MAX_BYTES } from '../shared/types';
 import type { AppSettings, ArchivedProject, Bootstrap, InviteEmailResult, MailboxVia, WebhookInfo, WebhookRequestInfo, Priority, Project, Role, SyncResponse, Task, TaskEvent, TaskLink, User } from '../shared/types';
 import { PRIORITIES, type CloudProvider } from '../shared/types';
@@ -275,6 +275,28 @@ export const setEffort = (id: string, effort: string | null, thenDone = false) =
   void patchTask(id, thenDone ? { effort, status: 'done' } : { effort },
     { toast: thenDone ? `Done: ${t.title}` : effort ? `Effort: ${storedEffortLabel(effort)}` : 'Effort cleared' });
 };
+/** Starts or stops a task's timer (projects with active time tracking). Stopping adds the minutes to the time spent. */
+export async function setTimer(taskId: string, action: 'start' | 'stop') {
+  const id = liveId(taskId);
+  const prev = S().tasks[id];
+  if (!prev) return;
+  if (action === 'start') putTask({ ...prev, timer: { startedAt: new Date().toISOString(), by: S().me!.id } });
+  pending.add(id);
+  try {
+    const { task } = await clientFor(id).patch<{ task: Task; next: Task | null }>('', { timer: action });
+    putTask(task);
+    if (action === 'stop') {
+      const added = Number(effortFor(task.effort, 'time') ?? 0) - Number(effortFor(prev.effort, 'time') ?? 0);
+      toast(added > 0 ? `Timer stopped: +${fmtTime(added)} (${fmtTime(Number(effortFor(task.effort, 'time')))} in all)` : 'Timer stopped: less than a minute');
+    }
+  } catch (e) {
+    putTask(prev);
+    toastError(e);
+  } finally {
+    pending.delete(id);
+  }
+}
+
 /** Sets a task's estimate (stored form, like effort, or null). */
 export const setEstimate = (id: string, estimate: string | null) =>
   void patchTask(id, { estimate }, { toast: estimate ? `Estimate: ${storedEffortLabel(estimate)}` : 'Estimate cleared' });
@@ -380,7 +402,7 @@ export async function moveTasks(ids: string[], dueDate: string) {
 
 /** Fields that edits made while a task was being added can change (kept when its real copy arrives). */
 const LOCAL_KEYS = ['title', 'notes', 'projectId', 'assigneeId', 'assignedBy', 'dueDate', 'durationDays', 'priority', 'status', 'doneAt', 'doneOn', 'doneBy',
-  'effort', 'estimate', 'checklist', 'followers', 'attachments', 'blockedBy', 'blocks', 'comments'] as const satisfies readonly (keyof Task)[];
+  'effort', 'estimate', 'timer', 'checklist', 'followers', 'attachments', 'blockedBy', 'blocks', 'comments'] as const satisfies readonly (keyof Task)[];
 
 /**
  * Adds the draft as a task. It shows at once (under a temporary id) and the box clears; the server makes it in the
@@ -763,8 +785,8 @@ export async function enableUser(id: string, projects?: string[]) {
   }
 }
 /** Creates or saves a project. Returns an error message to show in the editor, or the project's id. */
-export async function saveProject(p: { id: string | null; name: string; color: string; description: string; members: string[]; effort: EffortType | null; effortRequired: boolean; estimate: boolean }): Promise<{ error: string } | { id: string }> {
-  const body = { name: p.name, color: p.color, description: p.description, members: p.members, effort: p.effort, effortRequired: p.effortRequired, estimate: p.estimate };
+export async function saveProject(p: { id: string | null; name: string; color: string; description: string; members: string[]; effort: EffortType | null; effortRequired: boolean; estimate: boolean; timer: boolean }): Promise<{ error: string } | { id: string }> {
+  const body = { name: p.name, color: p.color, description: p.description, members: p.members, effort: p.effort, effortRequired: p.effortRequired, estimate: p.estimate, timer: p.timer };
   try {
     let id = p.id;
     if (id) await api.patch(`/api/admin/projects/${id}`, body);

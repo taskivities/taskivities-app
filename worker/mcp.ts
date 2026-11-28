@@ -139,6 +139,7 @@ function describeTask(t: Task, dir: Directory, t0: string) {
     ...(t.status === 'done' ? { done_on: t.doneOn, done_by: userLabel(dir, t.doneBy) } : {}),
     ...(t.notes ? { notes: t.notes } : {}),
     ...(p?.effort ? { effort: effort ? effortLabel(p.effort, effort) : null } : {}),
+    ...(t.timer ? { timer_running: { since: t.timer.startedAt, started_by: userLabel(dir, t.timer.by), minutes_so_far: Math.max(0, Math.floor((Date.now() - Date.parse(t.timer.startedAt)) / 60000)) } } : {}),
     ...(p?.effort && p.estimate ? { estimate: estimate ? effortLabel(p.effort, estimate) : null } : {}),
     ...(t.series?.active ? { repeats: describeRepeat(t.series.rule, t.series.anchor) } : {}),
     ...(t.comments ? { comments: t.comments } : {}),
@@ -307,7 +308,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
             name: p.name,
             description: p.description,
             color: p.color,
-            ...(p.effort ? { effort: { tracks: EFFORT_TYPES[p.effort].name, values: EFFORT_TYPES[p.effort].hint, required_to_finish: p.effortRequired, estimates: !!p.estimate } } : {}),
+            ...(p.effort ? { effort: { tracks: EFFORT_TYPES[p.effort].name, values: EFFORT_TYPES[p.effort].hint, required_to_finish: p.effortRequired, estimates: !!p.estimate, timer: !!p.timer } } : {}),
             members: (dir.assignable.get(p.id) ?? []).map((id) => {
               const u = dir.users.get(id)!;
               return { name: u.name, email: u.email, ...(u.role === 'admin' ? { role: 'admin' } : {}), ...(u.status === 'invited' ? { status: 'invited' } : {}) };
@@ -427,6 +428,10 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           skip: z.boolean().optional().describe('Repeating tasks: skip this copy. Pass on its own.'),
           effort: effortArg.optional().describe('Effort, for projects that track it (list_projects): "1h 30m", "M" or "5". Pass "" to clear it.'),
           estimate: estimateArg.optional(),
+          timer: z.enum(['start', 'stop']).optional().describe(
+            'Only for projects with active time tracking (list_projects: effort.timer). start starts the task\'s timer; stop stops it, ' +
+            'adds the whole minutes it ran to the time spent, and widens the task\'s dates to cover the days it ran. Pass on its own.',
+          ),
           duration_days: durationArg.optional(),
         },
       },
@@ -444,6 +449,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
             projectId: newProject?.id,
             effort: effortProject && args.effort !== undefined ? toEffort(effortProject, args.effort) : undefined,
             estimate: effortProject && args.estimate !== undefined ? toEstimate(effortProject, args.estimate) : undefined,
+            timer: args.timer,
             dueDate: args.due_date,
             durationDays: args.duration_days,
             priority: args.priority ? toPriority(args.priority) : undefined,
@@ -795,7 +801,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
     };
     const describeProject = (dir: Directory, p: Project) => ({
       name: p.name, description: p.description, color: p.color,
-      effort: p.effort ? { tracks: EFFORT_TYPES[p.effort].name, required_to_finish: p.effortRequired, estimates: !!p.estimate } : null,
+      effort: p.effort ? { tracks: EFFORT_TYPES[p.effort].name, required_to_finish: p.effortRequired, estimates: !!p.estimate, timer: !!p.timer } : null,
       members: [...dir.users.values()].filter((u) => u.role !== 'admin' && u.projects.includes(p.id)).map((u) => u.name),
     });
 
@@ -814,6 +820,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           effort: effortArgIn.optional(),
           effort_required: z.boolean().optional().describe('Effort must be recorded before a task is marked done.'),
           estimates: z.boolean().optional().describe('Tasks can also carry an optional estimate, in the same measure as effort.'),
+          timer: z.boolean().optional().describe('Active time tracking (effort: time only): tasks get a start/stop timer that adds to the time spent.'),
         },
       },
       (args) =>
@@ -824,7 +831,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           const id = await createProject(this.env, v, {
             name: args.name, description: args.description ?? '', members: m.ids,
             color: args.color ?? PROJECT_COLORS.find((c) => !used.has(c)) ?? PROJECT_COLORS[dir.projects.length % PROJECT_COLORS.length],
-            effort: args.effort ? toEffortType(args.effort) : null, effortRequired: args.effort_required, estimate: args.estimates,
+            effort: args.effort ? toEffortType(args.effort) : null, effortRequired: args.effort_required, estimate: args.estimates, timer: args.timer,
           });
           const after = await loadDirectory(this.env.DB, v);
           return {
@@ -851,6 +858,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           effort: effortArgIn.optional(),
           effort_required: z.boolean().optional(),
           estimates: z.boolean().optional().describe('Tasks can carry an optional estimate, in the same measure as effort.'),
+          timer: z.boolean().optional().describe('Active time tracking (effort: time only): a start/stop timer on tasks.'),
         },
       },
       (args) =>
@@ -866,7 +874,7 @@ export class TaskivitiesMCP extends McpAgent<Env, unknown, McpProps> {
           }
           await updateProject(this.env, v, p.id, {
             name: args.name, description: args.description, color: args.color, members,
-            ...(args.effort ? { effort: toEffortType(args.effort) } : {}), effortRequired: args.effort_required, estimate: args.estimates,
+            ...(args.effort ? { effort: toEffortType(args.effort) } : {}), effortRequired: args.effort_required, estimate: args.estimates, timer: args.timer,
           });
           const after = await loadDirectory(this.env.DB, v);
           return { updated: describeProject(after, after.projects.find((x) => x.id === p.id)!) };

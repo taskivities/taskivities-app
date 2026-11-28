@@ -36,6 +36,10 @@ export const fmt = (s: string): string => {
 export const rel = (s: string, today: string): string =>
   s === today ? 'Today' : s === addDays(today, 1) ? 'Tomorrow' : s === addDays(today, -1) ? 'Yesterday' : fmt(s);
 
+/** The date of a moment (ISO timestamp) in a time zone, as YYYY-MM-DD. */
+export const dayIn = (tz: string, iso: string): string =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+
 /** Today's date in a time zone, as YYYY-MM-DD. */
 export const todayIn = (tz: string): string =>
   new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());

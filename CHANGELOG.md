@@ -17,6 +17,7 @@ section into the new version's; `git push --follow-tags` publishes it.
   app's address), and `list_projects` and `list_tasks` say so too. If you've connected several Taskivities instances
   to the same assistant, it can tell them apart and says which one it used.
 - **Effort:** a project that tracks effort can also ask for an estimate (tick **Ask for an estimate too** in the project's editor). Each task then has an optional **Estimate** in the task panel, in the same measure as its effort (time, size or points); it shows as a "~" badge until the effort is recorded, is in the task's history, and assistants can set it with `estimate` on `create_task` and `update_task`.
+- **Effort:** projects that track time spent can turn on **active time tracking** in the project's editor. Each open task then has a **Start timer** button next to its effort; **Stop** adds the whole minutes it ran to the time spent (which you can still change by hand). If the time was spent on days outside the task's dates, the task's dates widen to cover them. A running timer shows on the task's row, each run reads as one line in the task's history ("logged 25m with the timer (1h 55m in all)"), marking the task done stops it, and assistants can start and stop it with `timer` on `update_task`. **⇧T** starts or stops it on the selected task.
 
 ### Changed
 

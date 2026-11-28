@@ -21,7 +21,7 @@ export function openProjEdit(id: string | null, opts: { forDraft?: boolean } = {
     projEdit: {
       id, forDraft: opts.forDraft, name: p?.name ?? '', color: p?.color ?? PROJECT_COLORS[localProjects(s).map((p) => p.id).length % PROJECT_COLORS.length],
       description: p?.description ?? '',
-      effort: p?.effort ?? null, effortRequired: p?.effortRequired ?? false, estimate: p?.estimate ?? false,
+      effort: p?.effort ?? null, effortRequired: p?.effortRequired ?? false, estimate: p?.estimate ?? false, timer: p?.timer ?? false,
       members: id ? people(s).filter((u) => !isAdmin(u) && u.projects.includes(id)).map((u) => u.id) : [],
       err: null, returnSel: activeSelector(),
     },
@@ -307,7 +307,7 @@ export function ProjectEditor({ pe, s }: { pe: ProjEdit; s: State }) {
   const save = async () => {
     if (!pe.name.trim()) { upd({ err: 'Give the project a name.' }); focusLater('#pe-name'); return; }
     upd({ busy: true, err: null });
-    const r = await saveProject({ id: pe.id, name: pe.name.trim(), color: pe.color, description: pe.description.trim(), members: pe.members, effort: pe.effort, effortRequired: pe.effortRequired, estimate: pe.estimate });
+    const r = await saveProject({ id: pe.id, name: pe.name.trim(), color: pe.color, description: pe.description.trim(), members: pe.members, effort: pe.effort, effortRequired: pe.effortRequired, estimate: pe.estimate, timer: pe.timer });
     if ('error' in r) { upd({ busy: false, err: r.error }); focusLater('#pe-name'); return; }
     // A new project shows up where it was asked for: picked in a project's view, or in the quick-add.
     const fresh = !pe.id;
@@ -358,7 +358,7 @@ export function ProjectEditor({ pe, s }: { pe: ProjEdit; s: State }) {
           <div className="pchips" role="radiogroup" aria-labelledby="pe-effort-l">
             {([null, ...EFFORT_ORDER] as (EffortType | null)[]).map((k) => (
               <button key={k ?? 'none'} className={`pchip ${pe.effort === k ? 'on' : ''}`} role="radio" aria-checked={pe.effort === k} data-act="pe-effort" data-e={k ?? 'none'}
-                onClick={() => upd({ effort: k, ...(k ? {} : { effortRequired: false, estimate: false }) })}>
+                onClick={() => upd({ effort: k, ...(k ? {} : { effortRequired: false, estimate: false }), ...(k === 'time' ? {} : { timer: false }) })}>
                 {k ? EFFORT_TYPES[k].name : 'Not tracked'}
               </button>
             ))}
@@ -374,6 +374,12 @@ export function ProjectEditor({ pe, s }: { pe: ProjEdit; s: State }) {
                 <input type="checkbox" data-act="pe-estimate" checked={pe.estimate} onChange={(e) => upd({ estimate: e.target.checked })} />
                 Ask for an estimate too (optional on each task)
               </label>
+              {pe.effort === 'time' && (
+                <label className="pe-req">
+                  <input type="checkbox" data-act="pe-timer" checked={pe.timer} onChange={(e) => upd({ timer: e.target.checked })} />
+                  Active time tracking: a start/stop timer on each task adds to the time spent
+                </label>
+              )}
             </div>
           )}
           {pe.id && s.projects[pe.id]?.effort && pe.effort !== s.projects[pe.id]?.effort && (

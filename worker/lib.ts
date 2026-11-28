@@ -137,7 +137,7 @@ export const sha256hex = async (s: string) =>
 // ---------- row mapping ----------
 // Always selected FROM tasks (no alias): the last column folds in the task's series, if any.
 export const TASK_COLS =
-  'id, title, notes, project_id, assignee_id, created_by, assigned_by, due_date, priority, status, done_at, done_on, done_by, created_at, updated_at, version, series_id, archived_at, archived_by, effort, estimate, duration_days, ' +
+  'id, title, notes, project_id, assignee_id, created_by, assigned_by, due_date, priority, status, done_at, done_on, done_by, created_at, updated_at, version, series_id, archived_at, archived_by, effort, estimate, duration_days, timer_started_at, timer_by, ' +
   "(SELECT json_object('id', s.id, 'rule', json(s.rule), 'anchor', s.starts_on, 'active', s.active, 'made', s.made, 'assigneeId', s.assignee_id, 'title', s.title) " +
   'FROM series s WHERE s.id = tasks.series_id) AS series_json, ' +
   "(SELECT COUNT(*) FROM task_events e WHERE e.task_id = tasks.id AND e.type = 'comment') AS comment_count, " +
@@ -157,7 +157,7 @@ export const TASK_COLS =
 export interface TaskRow {
   id: string; title: string; notes: string; project_id: string; assignee_id: string; created_by: string; assigned_by: string;
   due_date: string; priority: number; status: 'open' | 'done'; done_at: string | null; done_on: string | null; done_by: string | null;
-  created_at: string; updated_at: string; version: number; series_id: string | null; archived_at: string | null; archived_by: string | null; effort?: string | null; estimate?: string | null; duration_days?: number | null; series_json: string | null; comment_count: number; checklist_json: string | null; attachments_json: string | null; followers_json?: string | null;
+  created_at: string; updated_at: string; version: number; series_id: string | null; archived_at: string | null; archived_by: string | null; effort?: string | null; estimate?: string | null; timer_started_at?: string | null; timer_by?: string | null; duration_days?: number | null; series_json: string | null; comment_count: number; checklist_json: string | null; attachments_json: string | null; followers_json?: string | null;
   blocked_by_json?: string | null; blocks_json?: string | null;
 }
 const parseLinks = (j: string | null | undefined): TaskLink[] =>
@@ -180,6 +180,7 @@ export const mapTask = (r: TaskRow): Task => ({
   followers: followersFrom(r.created_by, r.followers_json),
   effort: r.effort ?? null,
   estimate: r.estimate ?? null,
+  timer: r.timer_started_at ? { startedAt: r.timer_started_at, by: r.timer_by ?? r.assignee_id } : null,
   durationDays: r.duration_days ?? null,
   blockedBy: parseLinks(r.blocked_by_json),
   blocks: parseLinks(r.blocks_json),
@@ -206,12 +207,13 @@ export const mapUser = (r: UserRow, projects: string[]): User => ({
 
 export interface ProjectRow {
   id: string; name: string; color: string; description: string; archived: number; created_at: string; archived_at: string | null; archived_by: string | null;
-  effort: string | null; effort_required: number; estimate?: number;
+  effort: string | null; effort_required: number; estimate?: number; timer?: number;
 }
 export const mapProject = (r: ProjectRow): Project => ({
   id: r.id, name: r.name, color: r.color, description: r.description, archived: !!r.archived,
   effort: isEffortType(r.effort) ? r.effort : null, effortRequired: isEffortType(r.effort) && !!r.effort_required,
   estimate: isEffortType(r.effort) && !!r.estimate,
+  timer: r.effort === 'time' && !!r.timer,
 });
 
 export interface EventRow { id: string; task_id: string; actor_id: string; via: string | null; type: string; from_value: string | null; to_value: string | null; note: string | null; at: string }

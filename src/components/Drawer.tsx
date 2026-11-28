@@ -2,13 +2,14 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { appName } from '../../shared/types';
 import { linkSite, linkWhere } from '../../shared/links';
 import { attachmentBlob, isFeed, remoteTaskUrl, sourceOf } from '../sources';
-import { EFFORT_TYPES, effortFor, effortLabel, storedEffortLabel } from '../../shared/effort';
+import { EFFORT_TYPES, effortFor, effortLabel, fmtTime, storedEffortLabel } from '../../shared/effort';
 import { addDays, fmt, rel } from '../../shared/dates';
 import { blockedUntil, expectedOn, holdingUp, openBlockers } from '../../shared/deps';
 import { isLate, lastDay, shownOn } from '../../shared/rules';
 import { describe } from '../../shared/repeat';
 import { CHECK_TEXT_MAX, COMMENT_MAX, PRIORITIES, type AttachmentInfo, type ChecklistItem, type Priority, type Task, type TaskEvent, type TaskLink } from '../../shared/types';
-import { setFollowing, addChecklistItems, addComment, attachmentUrl, closeDrawer, removeAttachment, uploadFiles, attachMenu, editChecklist, editNotes, removeChecklistItem, renameChecklistItem, toggleChecklistItem, loadEvents, moveTasks, openDrawer, openPop, patchTask, setBlocker, skipTask, toggleDone } from '../actions';
+import { setFollowing, addChecklistItems, addComment, attachmentUrl, closeDrawer, removeAttachment, uploadFiles, attachMenu, editChecklist, editNotes, removeChecklistItem, renameChecklistItem, toggleChecklistItem, loadEvents, moveTasks, openDrawer, openPop, patchTask, setBlocker, skipTask, toggleDone, setTimer } from '../actions';
+import { useTimerMinutes } from './rows';
 import { set, useStore, type State } from '../store';
 import { daysLabel, displayName, dueRange, firstName, lateDays, linksOf, stamp } from '../util';
 import { openMove, LateBadge } from './rows';
@@ -109,7 +110,8 @@ export function Drawer() {
               <dt>Effort</dt>
               <dd><button className="field" data-act="effort" title={EFFORT_TYPES[p.effort].hint} onClick={(e) => openPop({ type: 'effort', mode: 'task', id: t.id }, e.currentTarget)}>
                 {I.gauge(15)} {eff ? effortLabel(p.effort, eff) : <span className="ph">{p.effortRequired && t.status === 'open' ? 'Needed to finish' : 'Add'}</span>}
-                <span className="c">{I.chev()}</span></button></dd>
+                <span className="c">{I.chev()}</span></button>
+                {p.timer && p.effort === 'time' && (t.status === 'open' || t.timer) && <TimerButton t={t} s={s} />}</dd>
             </>}
             {p?.effort && p.estimate && <>
               <dt>Estimate</dt>
@@ -224,6 +226,7 @@ function EventText({ e, s }: { e: TaskEvent; s: State }) {
     case 'effort_set': return e.toValue
       ? (e.fromValue ? <>changed effort <b>{storedEffortLabel(e.fromValue)}</b> → <b>{storedEffortLabel(e.toValue)}</b></> : <>set effort to <b>{storedEffortLabel(e.toValue)}</b></>)
       : <>cleared effort (was <b>{storedEffortLabel(e.fromValue)}</b>)</>;
+    case 'timer_started': return <>started the timer</>;
     case 'estimate_set': return e.toValue
       ? (e.fromValue ? <>changed the estimate <b>{storedEffortLabel(e.fromValue)}</b> → <b>{storedEffortLabel(e.toValue)}</b></> : <>estimated <b>{storedEffortLabel(e.toValue)}</b></>)
       : <>cleared the estimate (was <b>{storedEffortLabel(e.fromValue)}</b>)</>;
@@ -467,6 +470,14 @@ function ChangesEntry({ g, s }: { g: Extract<HistoryEntry, { kind: 'changes' }>;
 /** One line: a single change (with its note), or a merged run of checklist changes. */
 function LineText({ line, s }: { line: HistoryLine; s: State }) {
   const [e] = line.events;
+  // A timer run (src/history.ts → foldTimer): the minutes it logged and the time spent after it.
+  if (e.type === 'timer_stopped') {
+    const mins = Number(e.toValue) || 0;
+    const total = line.events[1]?.toValue;
+    return mins > 0
+      ? <>logged <b>{fmtTime(mins)}</b> with the timer{total && <> ({storedEffortLabel(total)} in all)</>}</>
+      : <>stopped the timer (less than a minute)</>;
+  }
   if (line.events.length > 1) {
     const items = andList(line.events.map((x) => <b key={x.id}>{x.toValue}</b>));
     switch (e.type) {
@@ -550,4 +561,16 @@ function Attachments({ taskId, files, uploading, s }: { taskId: string; files: A
       ))}
     </div>
   );
+}
+
+/** Active time tracking: start the timer, or stop it (adding the whole minutes to the time spent). */
+function TimerButton({ t, s }: { t: Task; s: State }) {
+  const mins = useTimerMinutes(t.timer?.startedAt);
+  if (!t.timer) {
+    return <button className="btn-ghost sm timer-btn" data-act="timer-start" title="Start the timer: the minutes add to the time spent when you stop it"
+      onClick={() => void setTimer(t.id, 'start')}>{I.play(13)} Start timer</button>;
+  }
+  const who = t.timer.by !== s.me?.id ? ` (started by ${s.users[t.timer.by]?.name ?? 'someone'})` : '';
+  return <button className="btn-ghost sm timer-btn timing" data-act="timer-stop" title={`Stop the timer and add the minutes to the time spent${who}`}
+    onClick={() => void setTimer(t.id, 'stop')}>{I.stopSq(13)} Stop · {mins ? fmtTime(mins) : '<1m'}</button>;
 }

@@ -859,6 +859,9 @@ a.att-n:hover{color:var(--accent);text-decoration:underline}
 .clipmark{display:inline-flex;align-items:center;gap:2px;margin-left:7px;font-size:11px;font-weight:500;color:var(--faint);vertical-align:1px}
 /* Effort (projects that track it): a small pill after the title, and the picker */
 .efmark{display:inline-block;margin-left:7px;padding:0 6px;border-radius:999px;background:var(--fill-strong);font-size:10.5px;font-weight:600;line-height:16px;color:var(--muted);vertical-align:1px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.efmark.timing{background:color-mix(in srgb,var(--danger,#e5484d) 18%,transparent);color:var(--danger,#e5484d)}
+.timer-btn{margin-left:6px;display:inline-flex;align-items:center;gap:4px}
+.timer-btn.timing{color:var(--danger,#e5484d);font-variant-numeric:tabular-nums}
 .effort-pop{min-width:230px}
 .ef-time{display:flex;gap:6px;align-items:center;padding:0 4px}
 .ef-time .pin{margin:2px 0!important;flex:1}

@@ -39,6 +39,8 @@ export interface Project {
   effortRequired: boolean;
   /** Its tasks can carry an estimate too, in the same measure as effort (only while effort is tracked). */
   estimate?: boolean;
+  /** Active time tracking: its tasks have a start/stop timer that adds to the time spent (only while effort is 'time'). */
+  timer?: boolean;
   /** App only: a project on another instance (src/sources.ts): that instance's name. Never in this instance's lists. */
   feed?: string;
 }
@@ -137,6 +139,8 @@ export interface Task {
   effort: string | null;
   /** The estimate, stored like effort ('<type>:<value>'), or null. Optional; only shown where the project asks for one. */
   estimate?: string | null;
+  /** A running timer (projects with active time tracking): when it started and who started it. */
+  timer?: { startedAt: string; by: string } | null;
   /** Tasks this one waits on (its blockers), and tasks waiting on it. Archived tasks are left out. Rules: shared/deps.ts. */
   blockedBy: TaskLink[];
   blocks: TaskLink[];
@@ -159,6 +163,9 @@ export type EventType =
   | 'effort_set'
   /** Estimate set, changed or cleared: from/to are stored values, like effort_set. */
   | 'estimate_set'
+  /** Timer started (to: null), or stopped (to: the whole minutes it added). */
+  | 'timer_started'
+  | 'timer_stopped'
   /** Duration changed: from/to are the number of days (null: 1 day). */
   | 'duration_set'
   | 'project_changed'

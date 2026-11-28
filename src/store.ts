@@ -71,7 +71,7 @@ export interface Draft {
 export interface InviteDraft { emails: string; role: Role; projects: string[]; err: string | null; busy?: boolean }
 export interface ProjEdit {
   id: string | null; name: string; color: string; description: string; members: string[]; err: string | null; returnSel: string | null; busy?: boolean;
-  effort: EffortType | null; effortRequired: boolean; estimate: boolean;
+  effort: EffortType | null; effortRequired: boolean; estimate: boolean; timer: boolean;
   /** Showing the "Archive this project?" confirmation. */
   archiving?: boolean;
   /** Opened from the quick-add's project menu: a new project becomes the draft's project. */

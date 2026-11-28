@@ -2,7 +2,7 @@
 import { addDays } from '../shared/dates';
 import { isAdmin } from '../shared/rules';
 import type { Priority } from '../shared/types';
-import {
+import { setTimer,
   closeConnect, closeDrawer, enterFocus, exitFocus, goHome, closeHelp, closePop, moveTasks, openDrawer, openHelp, openPop, setPage, setPriority, setView, skipTask, toast, toggleDone, closeHook, editChecklist, editNotes, pickAttachments, setFollowing } from './actions';
 import { openInbox } from './inbox';
 import { openMove } from './components/rows';
@@ -205,6 +205,16 @@ export function onKeyDown(e: KeyboardEvent) {
   if (k === 'd') { e.preventDefault(); const a = anchor('move'); if (a) openMove([task.id], a); return; }
   if (k === 'r' && task.series?.active && task.status === 'open') { e.preventDefault(); const a = anchor('repeat'); if (a) openPop({ type: 'repeat', mode: 'task', id: task.id }, a); return; }
   if (k === 's' && task.series?.active && task.status === 'open') { e.preventDefault(); void skipTask(task.id); return; }
-  if (k === 't') { e.preventDefault(); const a = anchor('assign'); if (a) openPop({ type: 'assign', mode: 'task', id: task.id }, a); return; }
+  // ⇧T: start / stop the timer (projects with active time tracking). T alone is Transfer.
+  if ((k === 't' || k === 'T') && e.shiftKey) {
+    e.preventDefault();
+    const p = s.projects[task.projectId];
+    if (!p?.timer || p.effort !== 'time') toast(`${p?.name ?? 'This project'} doesn't use the timer`, undefined, true);
+    else if (task.timer) void setTimer(task.id, 'stop');
+    else if (task.status !== 'open') toast('Only an open task can be timed', undefined, true);
+    else { void setTimer(task.id, 'start'); toast(`Timer started: ${task.title}`); }
+    return;
+  }
+  if (k === 't' && !e.shiftKey) { e.preventDefault(); const a = anchor('assign'); if (a) openPop({ type: 'assign', mode: 'task', id: task.id }, a); return; }
   if (/^[1-4]$/.test(k)) { e.preventDefault(); const p = Number(k) as Priority; if (task.priority !== p) void setPriority(task.id, p); }
 }
