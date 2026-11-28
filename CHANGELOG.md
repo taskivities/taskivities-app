@@ -12,7 +12,7 @@ section into the new version's; `git push --follow-tags` publishes it.
 ### Added
 
 - **Switcher:** in "Select several", shift-click a person or project to tick (or untick) every row between it and
-  the last one you clicked.
+  the last one you clicked (or, before you've clicked one, the nearest ticked row).
 - **AI assistants:** an assistant connected over MCP is told which instance it's using (the team's name and the
   app's address), and `list_projects` and `list_tasks` say so too. If you've connected several Taskivities instances
   to the same assistant, it can tell them apart and says which one it used.

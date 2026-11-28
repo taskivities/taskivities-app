@@ -364,13 +364,18 @@ function SwitchPop({ p, s }: { p: Pop; s: State }) {
   const order = { people: [] as string[], projects: [] as string[] };
   const pickRange = (kind: 'people' | 'projects', id: string, shift: boolean) => {
     const cur = picked[kind];
-    const a = lastPick && lastPick.kind === kind && shift ? order[kind].indexOf(lastPick.id) : -1;
     const b = order[kind].indexOf(id);
+    // The anchor: the row last clicked in this list, or else (nothing clicked since the page opened) the nearest ticked one.
+    let a = shift && lastPick && lastPick.kind === kind ? order[kind].indexOf(lastPick.id) : -1;
+    if (shift && a < 0 && b >= 0) {
+      const ticked = order[kind].map((x, i) => (x !== id && cur.includes(x) ? i : -1)).filter((i) => i >= 0);
+      if (ticked.length) a = ticked.reduce((n, i) => (Math.abs(i - b) < Math.abs(n - b) ? i : n));
+    }
     if (a < 0 || b < 0) {
       lastPick = { kind, id };
       return flip(cur, id);
     }
-    const on = cur.includes(lastPick!.id);
+    const on = cur.includes(order[kind][a]);
     const span = order[kind].slice(Math.min(a, b), Math.max(a, b) + 1);
     lastPick = { kind, id };
     return on ? [...new Set([...cur, ...span])] : cur.filter((x) => !span.includes(x));
