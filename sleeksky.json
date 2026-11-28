@@ -1,5 +1,6 @@
 {
   "id": "taskivities",
+  "version": "1.0.0",
   "name": "Taskivities",
   "home": "/",
   "platform_signin": true,
