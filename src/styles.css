@@ -409,7 +409,7 @@ kbd{display:inline-grid;place-items:center;min-width:21px;height:21px;padding:0 
 /* drawer */
 .backdrop{position:absolute;inset:0;background:var(--backdrop);animation:fade .18s}
 @keyframes fade{from{opacity:0}}
-.drawer{position:absolute;top:0;right:0;bottom:0;width:450px;max-width:100%;background:var(--panel);box-shadow:-12px 0 40px rgba(16,16,29,.12);display:flex;flex-direction:column;animation:slide .22s cubic-bezier(.2,.8,.2,1)}
+.drawer{position:absolute;top:0;right:0;bottom:0;width:520px;max-width:100%;background:var(--panel);box-shadow:-12px 0 40px rgba(16,16,29,.12);display:flex;flex-direction:column;animation:slide .22s cubic-bezier(.2,.8,.2,1)}
 @keyframes slide{from{transform:translateX(30px);opacity:0}}
 .dr-top{display:flex;align-items:center;gap:8px;padding:12px 14px 12px 22px;border-bottom:1px solid var(--line2)}
 .dr-body{flex:1;overflow:auto;padding:20px 22px 40px}
