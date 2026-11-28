@@ -9,6 +9,8 @@ section into the new version's; `git push --follow-tags` publishes it.
 
 ## Unreleased
 
+## v0.15.0 (2026-11-28)
+
 ### Added
 
 - **Switcher:** in "Select several", shift-click a person or project to tick (or untick) every row between it and
